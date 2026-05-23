@@ -627,19 +627,6 @@ export function App() {
 
         {/* Sidebar Bottom Actions */}
         <div className="p-4 border-t border-zinc-150 dark:border-zinc-800 space-y-2 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 px-1">
-            <span className="flex items-center gap-1.5">
-              <span className={`inline-flex rounded-full h-1.5 w-1.5 ${isBackendOnline ? 'bg-emerald-500' : 'bg-red-500'}`} />
-              <span>{isBackendOnline ? 'Connected' : 'Offline'}</span>
-            </span>
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="hover:text-zinc-700 dark:hover:text-zinc-200 font-semibold"
-            >
-              Config
-            </button>
-          </div>
-
           <div className="flex justify-between items-center text-xs text-zinc-550 dark:text-zinc-300 px-1 py-1">
             <button
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

@@ -83,3 +83,47 @@ When testing locally:
 *   Auth is automatically bypassed to keep offline local development simple.
 *   You can open the **Settings drawer** in the UI and enter any custom username (e.g., `tester@domain.com`).
 *   This will automatically override local headers and map DynamoDB messages under that custom tester ID!
+
+---
+
+## 6. Creating Shared / Dummy User Credentials
+
+For testing, demoing, or sharing access with external reviewers, you can create pre-confirmed "dummy" or "guest" user credentials. 
+
+By default, users created via Cognito's administrative APIs start in a `FORCE_CHANGE_PASSWORD` state, which forces the user to reset their credentials on their first login. To create a seamless experience for external reviewers, you must set their password permanently using the AWS CLI or AWS Console.
+
+### Using the AWS CLI
+
+Run the following two commands to provision a pre-confirmed user with a permanent password. Replace `<UserPoolId>` with your actual Cognito User Pool ID (e.g., `ap-south-1_AjsNQ0nGB`):
+
+1. **Create the guest user and mark their email as verified:**
+   ```bash
+   aws cognito-idp admin-create-user \
+       --user-pool-id <UserPoolId> \
+       --username guest@example.com \
+       --user-attributes Name=email,Value=guest@example.com Name=email_verified,Value=true \
+       --message-action SUPPRESS
+   ```
+   *(The `--message-action SUPPRESS` flag prevents Cognito from trying to send an automated invitation email to a dummy email address).*
+
+2. **Set a permanent password (changes status from `FORCE_CHANGE_PASSWORD` to `CONFIRMED`):**
+   ```bash
+   aws cognito-idp admin-set-user-password \
+       --user-pool-id <UserPoolId> \
+       --username guest@example.com \
+       --password HelloGuest123 \
+       --permanent
+   ```
+   *(Make sure the password is at least 8 characters long to comply with the user pool security policy).*
+
+### Using the AWS Console (UI)
+
+1. Navigate to the **AWS Cognito Console** and select your User Pool (e.g., `chatbot-users-prod`).
+2. Go to **Users** -> **Create user**.
+3. Fill out the details:
+   - Select **Don't send an invitation message**.
+   - Input the **Email address** (e.g., `guest@example.com`).
+   - Check **Mark email address as verified**.
+   - Provide a temporary password and click **Create user**.
+4. Once created, you must still run the CLI step 2 (`admin-set-user-password` with `--permanent`) to bypass the forced password reset screen during their first login.
+

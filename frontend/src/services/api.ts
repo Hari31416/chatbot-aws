@@ -1,4 +1,5 @@
 import type { ChatRequest, ChatResponse } from "../types"
+import { getCurrentSessionToken } from "./auth"
 
 /**
  * Custom error class for API failures
@@ -41,12 +42,18 @@ export async function sendTextMessage(
   apiBaseUrl: string
 ): Promise<ChatResponse> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
   const response = await fetch(`${cleanUrl}/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
+    headers,
     body: JSON.stringify(payload),
   })
 
@@ -88,11 +95,17 @@ export async function sendImageMessage(
     formData.append("user_id", userId)
   }
 
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
   const response = await fetch(`${cleanUrl}/chat/image`, {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-    },
+    headers,
     body: formData,
   })
 

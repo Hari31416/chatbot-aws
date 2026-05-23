@@ -22,6 +22,16 @@ FRONTEND_URL=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='FrontendUrl'].OutputValue" \
   --output text)
 
+COGNITO_USER_POOL_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
+  --output text)
+
+COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
+  --output text)
+
 # Fallbacks in case CloudFormation stack output is not yet updated in the cloud
 if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" == "None" ]; then
   FRONTEND_BUCKET="chat-hari31416"
@@ -34,12 +44,14 @@ fi
 echo "📌 Active Backend API URL: $API_URL"
 echo "📌 Target S3 Bucket: $FRONTEND_BUCKET"
 echo "📌 Website URL: $FRONTEND_URL"
+echo "📌 Cognito User Pool ID: $COGNITO_USER_POOL_ID"
+echo "📌 Cognito Client ID: $COGNITO_CLIENT_ID"
 
 echo "========================================="
 echo "⚛️ 2. Building React frontend..."
 echo "========================================="
 cd frontend
-VITE_API_BASE_URL="$API_URL" pnpm build
+VITE_API_BASE_URL="$API_URL" VITE_COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" VITE_COGNITO_CLIENT_ID="$COGNITO_CLIENT_ID" VITE_AWS_REGION="ap-south-1" pnpm build
 cd ..
 
 echo "========================================="

@@ -64,13 +64,40 @@ Resources:
         - SSMParameterReadPolicy:
             ParameterName: chatbot/litellm_api_key
       Events:
-        # Proxy routes all traffic (ANY) to the FastAPI Mangum handler
-        ApiEvent:
+        # Secured proxy routes (inherits DefaultAuthorizer from ChatbotHttpApi)
+        GetApiEvent:
           Type: HttpApi
           Properties:
             Path: /{proxy+}
-            Method: ANY
+            Method: GET
             ApiId: !Ref ChatbotHttpApi
+        PostApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: POST
+            ApiId: !Ref ChatbotHttpApi
+        PutApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: PUT
+            ApiId: !Ref ChatbotHttpApi
+        DeleteApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: DELETE
+            ApiId: !Ref ChatbotHttpApi
+        # Public health check endpoint
+        HealthEvent:
+          Type: HttpApi
+          Properties:
+            Path: /health
+            Method: GET
+            ApiId: !Ref ChatbotHttpApi
+            Auth:
+              Authorizer: NONE
 
   # -------------------------------------------------------------
   # API Gateway HTTP API (API v2)
@@ -88,6 +115,16 @@ Resources:
           - GET
           - POST
           - OPTIONS
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              Audience:
+                - !Ref ChatbotUserPoolClient
+              Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${ChatbotUserPool}"
+
 
 
   # -------------------------------------------------------------
@@ -163,6 +200,44 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub arn:aws:s3:::${ChatbotFrontendBucket}/*
 
+  # -------------------------------------------------------------
+  # AWS Cognito User Pool
+  # -------------------------------------------------------------
+  ChatbotUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub chatbot-users-${Environment}
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+
+  # -------------------------------------------------------------
+  # AWS Cognito User Pool Client
+  # -------------------------------------------------------------
+  ChatbotUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub chatbot-client-${Environment}
+      UserPoolId: !Ref ChatbotUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+
 Outputs:
   ApiUrl:
     Description: "FastAPI base deployment URL"
@@ -173,4 +248,11 @@ Outputs:
   FrontendBucket:
     Description: "S3 Bucket Name for the Frontend Website"
     Value: !Ref ChatbotFrontendBucket
+  UserPoolId:
+    Description: "AWS Cognito User Pool ID"
+    Value: !Ref ChatbotUserPool
+  UserPoolClientId:
+    Description: "AWS Cognito User Pool Client ID"
+    Value: !Ref ChatbotUserPoolClient
+
 

@@ -9,7 +9,7 @@ from uuid import uuid4
 from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from ..dependencies import get_llm_client, get_repository, get_settings, get_storage
+from ..dependencies import get_llm_client, get_repository, get_settings, get_storage, get_current_user_id
 from ..models.schemas import Attachment, ChatImageResponse, ChatRequest, ChatResponse
 from ..services.prompt import build_history_messages, build_user_content
 from ..services.storage import build_image_key, extension_for_mime
@@ -59,18 +59,19 @@ async def chat(
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     llm=Depends(get_llm_client),
+    user_id: str = Depends(get_current_user_id),
 ) -> ChatResponse:
     try:
         conversation_id = payload.conversation_id or str(uuid4())
         logger.info(
-            "chat request conversation_id=%s user_id=%s", conversation_id, payload.user_id
+            "chat request conversation_id=%s user_id=%s", conversation_id, user_id
         )
         created_at = utcnow_iso()
         await to_thread.run_sync(
             repo.create_conversation,
             conversation_id,
             created_at,
-            payload.user_id,
+            user_id,
         )
 
         user_message_id = str(uuid4())
@@ -82,7 +83,7 @@ async def chat(
             payload.message,
             created_at,
             None,
-            payload.user_id,
+            user_id,
         )
 
         history = await _load_history(repo, conversation_id, settings.max_history_messages)
@@ -157,11 +158,11 @@ async def chat_image(
     file: UploadFile = File(...),
     message: str | None = Form(None),
     conversation_id: str | None = Form(None),
-    user_id: str | None = Form(None),
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     storage=Depends(get_storage),
     llm=Depends(get_llm_client),
+    user_id: str = Depends(get_current_user_id),
 ) -> ChatImageResponse:
     try:
         if file.content_type not in settings.allowed_image_mime_types:

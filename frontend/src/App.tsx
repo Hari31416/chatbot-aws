@@ -5,10 +5,26 @@ import { sendTextMessage, sendImageMessage, checkHealth } from './services/api'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/Toast'
 import { useTheme } from '@/components/theme-provider'
+import {
+  signUpUser,
+  confirmSignUpUser,
+  signInUser,
+  signOutUser,
+  isUserLoggedIn,
+  getCurrentUserEmail
+} from './services/auth'
 
 export function App() {
   const { toast } = useToast()
   const { theme, setTheme } = useTheme()
+
+  // --- Authentication State ---
+  const [isLoggedIn, setIsLoggedIn] = React.useState(isUserLoggedIn())
+  const [authMode, setAuthMode] = React.useState<'LOGIN' | 'SIGNUP' | 'VERIFY'>('LOGIN')
+  const [authEmail, setAuthEmail] = React.useState('')
+  const [authPassword, setAuthPassword] = React.useState('')
+  const [authCode, setAuthCode] = React.useState('')
+  const [authLoading, setAuthLoading] = React.useState(false)
 
   // --- Configuration State ---
   const [apiBaseUrl, setApiBaseUrl] = React.useState<string>(() => {
@@ -19,7 +35,7 @@ export function App() {
     return localStorage.getItem('api_base_url') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
   })
   const [userId, setUserId] = React.useState<string>(() => {
-    return localStorage.getItem('user_id') || 'admin'
+    return isLoggedIn ? getCurrentUserEmail() : 'admin'
   })
 
   // --- UI Layout State ---
@@ -54,7 +70,7 @@ export function App() {
     refetchInterval: 30000,
   })
 
-  // --- Save configs & state changes ---
+  // --- Sync configs and sessions ---
   React.useEffect(() => {
     localStorage.setItem('api_base_url', apiBaseUrl)
   }, [apiBaseUrl])
@@ -79,10 +95,84 @@ export function App() {
     localStorage.setItem('messages_cache', JSON.stringify(messages))
   }, [messages])
 
+  // Sync userId state dynamically with logged in user email
+  React.useEffect(() => {
+    if (isLoggedIn) {
+      setUserId(getCurrentUserEmail())
+    } else {
+      setUserId('admin')
+    }
+  }, [isLoggedIn])
+
   // Scroll to bottom on new messages
   React.useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, activeConversationId])
+
+  // --- Authentication Handlers ---
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!authEmail.trim() || (!authPassword && authMode !== 'VERIFY')) return
+
+    setAuthLoading(true)
+    try {
+      if (authMode === 'LOGIN') {
+        await signInUser(authEmail.trim(), authPassword)
+        setIsLoggedIn(true)
+        toast({
+          title: 'Welcome back!',
+          description: 'Login successful.',
+          type: 'success'
+        })
+      } else if (authMode === 'SIGNUP') {
+        await signUpUser(authEmail.trim(), authPassword)
+        setAuthMode('VERIFY')
+        toast({
+          title: 'Account Created',
+          description: 'Please check your email for the verification code.',
+          type: 'info'
+        })
+      } else if (authMode === 'VERIFY') {
+        if (!authCode.trim()) {
+          toast({
+            title: 'Verification Code Required',
+            description: 'Please enter the 6-digit confirmation code.',
+            type: 'error'
+          })
+          setAuthLoading(false)
+          return
+        }
+        await confirmSignUpUser(authEmail.trim(), authCode.trim())
+        setAuthMode('LOGIN')
+        setAuthCode('')
+        setAuthPassword('')
+        toast({
+          title: 'Account Verified!',
+          description: 'Verification successful. You can now log in.',
+          type: 'success'
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Authentication Failed',
+        description: err.message || 'Operation failed',
+        type: 'error'
+      })
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const handleLogout = () => {
+    signOutUser()
+    setIsLoggedIn(false)
+    setActiveConversationId(null)
+    toast({
+      title: 'Logged Out',
+      description: 'Session terminated successfully.',
+      type: 'info'
+    })
+  }
 
   // --- Message mutation handlers ---
   const sendMutation = useMutation({
@@ -167,7 +257,7 @@ export function App() {
     }
   })
 
-  // --- Handlers ---
+  // --- Chat Handlers ---
   const handleCreateConversation = () => {
     const newId = Math.random().toString(36).substring(2, 9)
     const newConv: Conversation = {
@@ -179,11 +269,6 @@ export function App() {
     setConversations((prev) => [newConv, ...prev])
     setActiveConversationId(newId)
     setMessages((prev) => ({ ...prev, [newId]: [] }))
-    toast({
-      title: 'New Conversation Created',
-      description: 'You can now ask anything below.',
-      type: 'info'
-    })
   }
 
   const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
@@ -316,6 +401,7 @@ export function App() {
             <div className="flex items-center justify-between border-b border-zinc-850 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-400">
               <span className="uppercase">{language}</span>
               <button
+                type="button"
                 onClick={() => handleCopyCode(codeText, blockId)}
                 className="hover:text-zinc-200 transition-colors"
               >
@@ -371,6 +457,116 @@ export function App() {
 
   const activeMessages = activeConversationId ? messages[activeConversationId] || [] : []
 
+  // --- Auth Gate Modal (Clean Light UI Gate) ---
+  if (!isLoggedIn) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 font-sans text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+        <div className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 animate-in zoom-in-95 duration-150">
+
+          <div className="text-center space-y-1 mb-5">
+            <h1 className="text-lg font-bold tracking-tight text-blue-600 dark:text-blue-500">
+              Chatbot
+            </h1>
+            <p className="text-xs text-zinc-450">
+              {authMode === 'LOGIN' && 'Sign in to access your chatbot'}
+              {authMode === 'SIGNUP' && 'Create a free user account'}
+              {authMode === 'VERIFY' && 'Enter the confirmation code sent to your email'}
+            </p>
+          </div>
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            <div>
+              <label className="text-[11px] font-semibold text-zinc-500 block mb-1">EMAIL ADDRESS</label>
+              <input
+                type="email"
+                required
+                disabled={authMode === 'VERIFY' || authLoading}
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="you@domain.com"
+                className="w-full px-3 py-2 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+
+            {authMode !== 'VERIFY' && (
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-500 block mb-1">PASSWORD</label>
+                <input
+                  type="password"
+                  required
+                  disabled={authLoading}
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3 py-2 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            )}
+
+            {authMode === 'VERIFY' && (
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-500 block mb-1">CONFIRMATION CODE</label>
+                <input
+                  type="text"
+                  required
+                  disabled={authLoading}
+                  value={authCode}
+                  onChange={(e) => setAuthCode(e.target.value)}
+                  placeholder="123456"
+                  maxLength={6}
+                  className="w-full px-3 py-2 text-xs text-center tracking-widest font-mono rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition duration-150 disabled:opacity-50"
+            >
+              {authLoading ? 'Processing...' : (
+                <>
+                  {authMode === 'LOGIN' && 'Sign In'}
+                  {authMode === 'SIGNUP' && 'Sign Up'}
+                  {authMode === 'VERIFY' && 'Verify Account'}
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Mode Switchers */}
+          <div className="mt-4 pt-4 border-t border-zinc-150 dark:border-zinc-850 text-center text-xs text-zinc-500">
+            {authMode === 'LOGIN' && (
+              <p>
+                Don't have an account?{' '}
+                <button onClick={() => setAuthMode('SIGNUP')} className="text-blue-500 font-semibold hover:underline">
+                  Sign Up
+                </button>
+              </p>
+            )}
+            {authMode === 'SIGNUP' && (
+              <p>
+                Already have an account?{' '}
+                <button onClick={() => setAuthMode('LOGIN')} className="text-blue-500 font-semibold hover:underline">
+                  Sign In
+                </button>
+              </p>
+            )}
+            {authMode === 'VERIFY' && (
+              <p>
+                Did not receive code?{' '}
+                <button onClick={() => setAuthMode('LOGIN')} className="text-blue-500 font-semibold hover:underline">
+                  Back to Sign In
+                </button>
+              </p>
+            )}
+          </div>
+
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-zinc-50 font-sans text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
 
@@ -381,6 +577,9 @@ export function App() {
       >
         {/* Sidebar Brand Header */}
         <div className="flex items-center gap-2 p-5 border-b border-zinc-150 dark:border-zinc-800">
+          <span className="text-lg font-bold tracking-tight text-blue-600 dark:text-blue-500">
+            Chatbot
+          </span>
         </div>
 
         {/* Action Button: Create Chat */}
@@ -428,13 +627,33 @@ export function App() {
 
         {/* Sidebar Bottom Actions */}
         <div className="p-4 border-t border-zinc-150 dark:border-zinc-800 space-y-2 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 px-1">
+            <span className="flex items-center gap-1.5">
+              <span className={`inline-flex rounded-full h-1.5 w-1.5 ${isBackendOnline ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <span>{isBackendOnline ? 'Connected' : 'Offline'}</span>
+            </span>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="hover:text-zinc-700 dark:hover:text-zinc-200 font-semibold"
+            >
+              Config
+            </button>
+          </div>
 
-          <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="w-full text-left text-xs text-zinc-550 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded px-2 py-1.5"
-          >
-            {theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode'}
-          </button>
+          <div className="flex justify-between items-center text-xs text-zinc-550 dark:text-zinc-300 px-1 py-1">
+            <button
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="hover:text-zinc-750 dark:hover:text-zinc-100"
+            >
+              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-red-500 hover:text-red-700 font-semibold"
+            >
+              Log Out
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -452,7 +671,6 @@ export function App() {
                 Menu
               </button>
             )}
-            {/* Folder Dropdown Look-alike */}
             {activeConversationId && (
               <div className="flex items-center gap-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-1 rounded-md text-xs font-medium text-zinc-700 dark:text-zinc-300 shadow-xs">
                 <span>📁 {conversations.find((c) => c.id === activeConversationId)?.name || 'Active Chat'}</span>
@@ -462,7 +680,7 @@ export function App() {
 
           {/* User badge */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-450 dark:text-zinc-450 font-medium truncate max-w-[100px]">{userId}</span>
+            <span className="text-xs text-zinc-450 dark:text-zinc-450 font-medium truncate max-w-[150px]">{userId}</span>
             <div className="h-7 w-7 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-semibold select-none shadow-xs">
               {userId.charAt(0).toUpperCase()}
             </div>
@@ -477,7 +695,7 @@ export function App() {
                 Serverless Chatbot Platform
               </h1>
               <p className="text-sm text-zinc-450 max-w-sm">
-                Deployed on AWS Lambda. Ask details, clarify queries, or send images.
+                Securely authenticated via AWS Cognito. Deployed on AWS Lambda.
               </p>
 
               <div className="flex gap-2 w-full max-w-md pt-4 justify-center">
@@ -561,7 +779,7 @@ export function App() {
                     <span className="text-[10px] uppercase font-semibold tracking-wider text-zinc-400">
                       ASSISTANT
                     </span>
-                    <div className="rounded-xl px-4 py-2 border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 text-xs text-zinc-400 italic">
+                      <div className="rounded-xl px-4 py-2 border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 text-xs text-zinc-450 italic">
                       Thinking...
                     </div>
                   </div>
@@ -578,8 +796,8 @@ export function App() {
 
             {/* Attachment preview */}
             {imagePreviewUrl && (
-              <div className="flex items-center gap-2 p-1.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 rounded-lg max-w-xs">
-                <div className="relative h-10 w-10 rounded overflow-hidden border border-zinc-200 dark:border-zinc-800 shrink-0">
+              <div className="flex items-center gap-2 p-1.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-955 rounded-lg max-w-xs">
+                <div className="relative h-10 w-10 rounded overflow-hidden border border-zinc-200 dark:border-zinc-850 shrink-0">
                   <img src={imagePreviewUrl} alt="Preview" className="h-full w-full object-cover" />
                   <button
                     type="button"
@@ -608,7 +826,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className={`text-sm mr-2.5 transition ${selectedImage ? 'text-blue-500 font-semibold' : 'text-zinc-400 hover:text-zinc-600'}`}
+                className={`text-sm mr-2.5 transition ${selectedImage ? 'text-blue-500 font-semibold' : 'text-zinc-405 hover:text-zinc-600'}`}
                 title="Upload image"
               >
                 📎
@@ -619,7 +837,7 @@ export function App() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder="Ask anything..."
-                className="flex-1 bg-transparent border-none outline-hidden text-sm py-1.5 placeholder-zinc-400"
+                className="flex-1 bg-transparent border-none outline-hidden text-sm py-1.5 placeholder-zinc-450"
               />
 
               <button
@@ -650,7 +868,7 @@ export function App() {
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-sm overflow-hidden shadow-xl animate-in zoom-in-95 duration-150">
 
             <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 px-4 py-3 bg-zinc-50 dark:bg-zinc-900/50">
-              <span className="font-semibold text-sm">Settings</span>
+              <span className="font-semibold text-sm">Configuration Settings</span>
               <button
                 onClick={() => setIsSettingsOpen(false)}
                 className="text-zinc-400 hover:text-zinc-600 text-sm font-bold"
@@ -691,24 +909,23 @@ export function App() {
                 />
               </div>
 
-              {/* User configuration */}
+              {/* User ID display only */}
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
-                  User ID
+                  Active Cognito Email
                 </label>
                 <input
                   type="text"
+                  disabled
                   value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  placeholder="admin"
-                  className="w-full px-2.5 py-1.5 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-mono focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                  className="w-full px-2.5 py-1.5 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950 font-mono opacity-70"
                 />
               </div>
             </div>
 
             <div className="border-t border-zinc-200 dark:border-zinc-850 px-4 py-3 bg-zinc-50 dark:bg-zinc-900/50 flex justify-end">
               <Button onClick={() => setIsSettingsOpen(false)} size="sm">
-                Save & Close
+                Close
               </Button>
             </div>
 

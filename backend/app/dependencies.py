@@ -81,3 +81,35 @@ def get_llm_client() -> LlmClient:
         base_url=settings.litellm_base_url,
     )
 
+
+from fastapi import Request
+
+
+def get_current_user_id(request: Request) -> str:
+    # 1. AWS Lambda Environment: Extract Cognito claims
+    aws_event = request.scope.get("aws.event")
+    if aws_event and isinstance(aws_event, dict):
+        request_context = aws_event.get("requestContext", {})
+        authorizer = request_context.get("authorizer", {})
+        jwt = authorizer.get("jwt", {})
+        claims = jwt.get("claims", {})
+        # Cognito passes user ID/username inside JWT claims
+        cognito_user = claims.get("username") or claims.get("sub")
+        if cognito_user:
+            return cognito_user
+
+    # 2. Local development fallback: Authorization Bearer token or custom header
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        # Skip token format validation locally, use token content as user_id directly
+        if token and len(token) < 50:  # If it is a simple username string
+            return token
+
+    x_user = request.headers.get("X-User-ID")
+    if x_user:
+        return x_user
+
+    return "admin"
+
+

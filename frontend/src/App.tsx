@@ -1,5 +1,7 @@
 import * as React from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { Message, Conversation } from './types'
 import { sendTextMessage, sendImageMessage, checkHealth } from './services/api'
 import { Button } from '@/components/ui/button'
@@ -382,77 +384,110 @@ export function App() {
     })
   }
 
-  // --- Custom Markdown/Code Block Parser ---
-  const renderMarkdown = (text: string) => {
-    if (!text) return null
+  // --- Beautiful React Markdown/Code Block Parser ---
+  const markdownComponents = React.useMemo(() => ({
+    h1: ({ children, ...props }: any) => (
+      <h1 className="text-xl font-bold mt-4 mb-2 text-zinc-900 dark:text-white" {...props}>{children}</h1>
+    ),
+    h2: ({ children, ...props }: any) => (
+      <h2 className="text-lg font-bold mt-3 mb-1.5 text-zinc-900 dark:text-white" {...props}>{children}</h2>
+    ),
+    h3: ({ children, ...props }: any) => (
+      <h3 className="text-base font-bold mt-2.5 mb-1 text-zinc-900 dark:text-white" {...props}>{children}</h3>
+    ),
+    p: ({ children, ...props }: any) => (
+      <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed my-2" {...props}>{children}</p>
+    ),
+    ul: ({ children, ...props }: any) => (
+      <ul className="list-disc pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300" {...props}>{children}</ul>
+    ),
+    ol: ({ children, ...props }: any) => (
+      <ol className="list-decimal pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300" {...props}>{children}</ol>
+    ),
+    li: ({ children, ...props }: any) => (
+      <li className="leading-relaxed" {...props}>{children}</li>
+    ),
+    strong: ({ children, ...props }: any) => (
+      <strong className="font-semibold text-zinc-900 dark:text-white" {...props}>{children}</strong>
+    ),
+    em: ({ children, ...props }: any) => (
+      <em className="italic text-zinc-800 dark:text-zinc-200" {...props}>{children}</em>
+    ),
+    a: ({ children, href, ...props }: any) => (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-650 dark:text-blue-400 hover:underline font-medium" {...props}>
+        {children}
+      </a>
+    ),
+    blockquote: ({ children, ...props }: any) => (
+      <blockquote className="border-l-4 border-zinc-300 dark:border-zinc-700 pl-4 py-1 italic my-3 text-zinc-600 dark:text-zinc-400" {...props}>
+        {children}
+      </blockquote>
+    ),
+    table: ({ children, ...props }: any) => (
+      <div className="overflow-x-auto my-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table className="w-full border-collapse text-left text-sm" {...props}>{children}</table>
+      </div>
+    ),
+    thead: ({ children, ...props }: any) => (
+      <thead className="bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800" {...props}>{children}</thead>
+    ),
+    tbody: ({ children, ...props }: any) => (
+      <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800" {...props}>{children}</tbody>
+    ),
+    tr: ({ children, ...props }: any) => (
+      <tr className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition-colors" {...props}>{children}</tr>
+    ),
+    th: ({ children, ...props }: any) => (
+      <th className="px-4 py-2 font-semibold text-zinc-900 dark:text-white border-r last:border-r-0 border-zinc-200 dark:border-zinc-800" {...props}>{children}</th>
+    ),
+    td: ({ children, ...props }: any) => (
+      <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300 border-r last:border-r-0 border-zinc-200 dark:border-zinc-800" {...props}>{children}</td>
+    ),
+    code: ({ className, children, ...props }: any) => {
+      const match = /language-(\w+)/.exec(className || '')
+      const codeText = String(children).replace(/\n$/, '')
+      const isInline = !match && !codeText.includes('\n')
 
-    const parts = text.split(/(```[\s\S]*?```)/g)
+      const blockId = React.useId()
 
-    return parts.map((part, index) => {
-      if (part.startsWith('```')) {
-        const lines = part.split('\n')
-        const firstLine = lines[0].replace('```', '').trim()
-        const language = firstLine || 'code'
-        const codeText = lines.slice(1, -1).join('\n')
-        const blockId = `block-${index}`
-
+      if (isInline) {
         return (
-          <div key={index} className="my-3 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 text-zinc-200 dark:border-zinc-800">
-            <div className="flex items-center justify-between border-b border-zinc-850 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-400">
-              <span className="uppercase">{language}</span>
-              <button
-                type="button"
-                onClick={() => handleCopyCode(codeText, blockId)}
-                className="hover:text-zinc-200 transition-colors"
-              >
-                {copiedBlockId === blockId ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-            <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-zinc-100">
-              <code>{codeText}</code>
-            </pre>
-          </div>
+          <code className="rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 font-mono text-xs text-blue-600 dark:text-blue-400" {...props}>
+            {children}
+          </code>
         )
       }
 
-      const paragraphs = part.split('\n\n')
-      return paragraphs.map((p, pIndex) => {
-        if (!p.trim()) return null
+      const language = match ? match[1] : 'code'
+      return (
+        <div className="my-3 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 text-zinc-200 dark:border-zinc-800">
+          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-400">
+            <span className="uppercase">{language}</span>
+            <button
+              type="button"
+              onClick={() => handleCopyCode(codeText, blockId)}
+              className="hover:text-zinc-200 transition-colors cursor-pointer"
+            >
+              {copiedBlockId === blockId ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-zinc-100">
+            <code className={className} {...props}>
+              {children}
+            </code>
+          </pre>
+        </div>
+      )
+    }
+  }), [copiedBlockId])
 
-        const formatted = p.split(/(\*\*.*?\*\*|`.*?`)/g).map((subPart, sIndex) => {
-          if (subPart.startsWith('**') && subPart.endsWith('**')) {
-            return <strong key={sIndex} className="font-semibold text-zinc-900 dark:text-white">{subPart.slice(2, -2)}</strong>
-          }
-          if (subPart.startsWith('`') && subPart.endsWith('`')) {
-            return (
-              <code key={sIndex} className="rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 font-mono text-xs text-blue-600 dark:text-blue-400">
-                {subPart.slice(1, -1)}
-              </code>
-            )
-          }
-          return subPart
-        })
-
-        if (p.trim().startsWith('- ') || p.trim().startsWith('* ')) {
-          const listItems = p.split(/\n/g)
-          return (
-            <ul key={pIndex} className="list-disc pl-5 my-1.5 space-y-0.5">
-              {listItems.map((item, iIndex) => (
-                <li key={iIndex} className="text-zinc-700 dark:text-zinc-300">
-                  {item.replace(/^[-*]\s+/, '')}
-                </li>
-              ))}
-            </ul>
-          )
-        }
-
-        return (
-          <p key={pIndex} className="text-zinc-700 dark:text-zinc-300 leading-relaxed my-1">
-            {formatted}
-          </p>
-        )
-      })
-    })
+  const renderMarkdown = (text: string) => {
+    if (!text) return null
+    return (
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {text}
+      </ReactMarkdown>
+    )
   }
 
   const activeMessages = activeConversationId ? messages[activeConversationId] || [] : []

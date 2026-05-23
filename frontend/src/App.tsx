@@ -788,7 +788,7 @@ export function App() {
                     {/* Timestamp */}
                     <span className={`text-[9px] text-zinc-400 px-1 font-mono ${msg.role === 'user' ? 'text-right' : 'text-left'
                       }`}>
-                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </span>
                   </div>
                 </div>

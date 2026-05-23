@@ -41,7 +41,9 @@ export function App() {
   })
 
   // --- UI Layout State ---
-  const [isSidebarOpen, setIsSidebarOpen] = React.useState(true)
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(() => {
+    return typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  })
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
   const [lightboxImage, setLightboxImage] = React.useState<string | null>(null)
   const [copiedBlockId, setCopiedBlockId] = React.useState<string | null>(null)
@@ -605,16 +607,35 @@ export function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-zinc-50 font-sans text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
 
+      {/* Mobile Sidebar Overlay Backdrop */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 md:hidden transition-opacity"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* --- LEFT SIDEBAR (Ultra-Clean, White Background) --- */}
       <aside
-        className={`flex flex-col border-r border-zinc-200 bg-white dark:bg-zinc-900 transition-all duration-300 z-30 shrink-0 h-full ${isSidebarOpen ? 'w-64' : 'w-0 overflow-hidden border-none'
+        className={`fixed md:relative flex flex-col border-r border-zinc-200 bg-white dark:bg-zinc-900 transition-all duration-300 z-40 shrink-0 h-full shadow-lg md:shadow-none ${isSidebarOpen
+          ? 'w-64 translate-x-0'
+          : 'w-64 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden border-none'
           }`}
       >
         {/* Sidebar Brand Header */}
-        <div className="flex items-center gap-2 p-5 border-b border-zinc-150 dark:border-zinc-800">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-150 dark:border-zinc-800">
           <span className="text-lg font-bold tracking-tight text-blue-600 dark:text-blue-500">
             Chatbot
           </span>
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 dark:text-zinc-400 transition cursor-pointer block"
+            aria-label="Collapse sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+            </svg>
+          </button>
         </div>
 
         {/* Action Button: Create Chat */}
@@ -661,17 +682,30 @@ export function App() {
         </div>
 
         {/* Sidebar Bottom Actions */}
-        <div className="p-4 border-t border-zinc-150 dark:border-zinc-800 space-y-2 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <div className="flex justify-between items-center text-xs text-zinc-550 dark:text-zinc-300 px-1 py-1">
+        <div className="p-4 border-t border-zinc-150 dark:border-zinc-800 space-y-3 bg-zinc-50/50 dark:bg-zinc-900/50">
+          {/* User Profile Card */}
+          <div className="flex items-center gap-2.5 px-1 py-0.5">
+            <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-semibold select-none shadow-xs shrink-0">
+              {userId.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate" title={userId}>
+                {userId}
+              </span>
+              <span className="text-[10px] text-zinc-400 font-medium">Active Session</span>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center text-xs text-zinc-550 dark:text-zinc-300 px-1 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
             <button
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="hover:text-zinc-750 dark:hover:text-zinc-100"
+              className="hover:text-zinc-750 dark:hover:text-zinc-100 cursor-pointer"
             >
               {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
             </button>
             <button
               onClick={handleLogout}
-              className="text-red-500 hover:text-red-700 font-semibold"
+              className="text-red-500 hover:text-red-750 font-semibold cursor-pointer"
             >
               Log Out
             </button>
@@ -682,35 +716,21 @@ export function App() {
       {/* --- MAIN CONTENT WINDOW --- */}
       <main className="flex-1 flex flex-col relative h-full min-w-0 bg-slate-50 dark:bg-zinc-950">
 
-        {/* Top Header Bar */}
-        <header className="flex h-14 items-center justify-between border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 z-20 shadow-xs">
-          <div className="flex items-center gap-3">
-            {!isSidebarOpen && (
-              <button
-                className="text-sm font-semibold border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1 bg-zinc-50 hover:bg-zinc-100"
-                onClick={() => setIsSidebarOpen(true)}
-              >
-                Menu
-              </button>
-            )}
-            {activeConversationId && (
-              <div className="flex items-center gap-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-1 rounded-md text-xs font-medium text-zinc-700 dark:text-zinc-300 shadow-xs">
-                <span>📁 {conversations.find((c) => c.id === activeConversationId)?.name || 'Active Chat'}</span>
-              </div>
-            )}
-          </div>
-
-          {/* User badge */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-450 dark:text-zinc-450 font-medium truncate max-w-[150px]">{userId}</span>
-            <div className="h-7 w-7 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-semibold select-none shadow-xs">
-              {userId.charAt(0).toUpperCase()}
-            </div>
-          </div>
-        </header>
+        {/* Floating Sidebar Toggle (ChatGPT/Claude style) */}
+        {!isSidebarOpen && (
+          <button
+            className="absolute top-4 left-4 p-2.5 z-20 border border-zinc-200 dark:border-zinc-850 rounded-lg bg-white/90 dark:bg-zinc-900/90 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-650 dark:text-zinc-300 backdrop-blur-xs transition-all shadow-xs hover:shadow-sm cursor-pointer block"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+        )}
 
         {/* Chat Feed */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin">
+        <div className={`flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin ${!isSidebarOpen ? 'pt-16' : ''}`}>
           {activeMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center max-w-lg mx-auto text-center space-y-4 py-20">
               <h1 className="text-xl font-semibold text-zinc-850 dark:text-white">

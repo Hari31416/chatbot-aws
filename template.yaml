@@ -132,36 +132,23 @@ Resources:
             ExpirationInDays: 7
 
   # -------------------------------------------------------------
-  # Amazon S3 Bucket for Static Frontend Website Hosting
+  # Amazon S3 Bucket for Static Frontend Website Hosting (Public S3 Website)
   # -------------------------------------------------------------
   ChatbotFrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub chatbot-frontend-${AWS::AccountId}-${Environment}
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
       WebsiteConfiguration:
         IndexDocument: index.html
         ErrorDocument: index.html
 
   # -------------------------------------------------------------
-  # CloudFront Origin Access Control (OAC) for S3 Security
-  # -------------------------------------------------------------
-  ChatbotFrontendOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Description: OAC for Chatbot React Frontend S3 Bucket
-        Name: !Sub chatbot-frontend-oac-${Environment}
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  # -------------------------------------------------------------
-  # S3 Bucket Policy allowing CloudFront Read access
+  # S3 Bucket Policy allowing Public Read access for website files
   # -------------------------------------------------------------
   ChatbotFrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -170,62 +157,20 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowCloudFrontServicePrincipalReadOnly
+          - Sid: PublicReadGetObject
             Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
+            Principal: "*"
             Action: s3:GetObject
             Resource: !Sub arn:aws:s3:::${ChatbotFrontendBucket}/*
-            Condition:
-              ArnEquals:
-                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${ChatbotFrontendDistribution}
-
-  # -------------------------------------------------------------
-  # CloudFront CDN Distribution
-  # -------------------------------------------------------------
-  ChatbotFrontendDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Origins:
-          - Id: S3-ChatbotFrontend
-            DomainName: !GetAtt ChatbotFrontendBucket.RegionalDomainName
-            S3OriginConfig:
-              OriginAccessIdentity: ""
-            OriginAccessControlId: !GetAtt ChatbotFrontendOAC.Id
-        Enabled: true
-        DefaultRootObject: index.html
-        # Client side SPA routing safe error overrides
-        CustomErrorResponses:
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-        DefaultCacheBehavior:
-          TargetOriginId: S3-ChatbotFrontend
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-          CachedMethods:
-            - GET
-            - HEAD
-          Compress: true
-          ForwardedValues:
-            QueryString: false
-            Cookies:
-              Forward: none
 
 Outputs:
   ApiUrl:
     Description: "FastAPI base deployment URL"
     Value: !Sub "https://${ChatbotHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   FrontendUrl:
-    Description: "CloudFront Distribution URL for the Chatbot React Frontend"
-    Value: !Sub "https://${ChatbotFrontendDistribution.DomainName}"
+    Description: "S3 Static Website Hosting URL for the Chatbot React Frontend"
+    Value: !GetAtt ChatbotFrontendBucket.WebsiteURL
+  FrontendBucket:
+    Description: "S3 Bucket Name for the Frontend Website"
+    Value: !Ref ChatbotFrontendBucket
 

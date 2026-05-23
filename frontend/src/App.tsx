@@ -12,7 +12,11 @@ export function App() {
 
   // --- Configuration State ---
   const [apiBaseUrl, setApiBaseUrl] = React.useState<string>(() => {
-    return localStorage.getItem('api_base_url') || 'http://localhost:8080'
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    if (!isLocalhost && import.meta.env.VITE_API_BASE_URL) {
+      return import.meta.env.VITE_API_BASE_URL
+    }
+    return localStorage.getItem('api_base_url') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
   })
   const [userId, setUserId] = React.useState<string>(() => {
     return localStorage.getItem('user_id') || 'admin'

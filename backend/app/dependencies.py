@@ -82,6 +82,32 @@ def get_llm_client() -> LlmClient:
     )
 
 
+def get_vision_llm_client() -> LlmClient:
+    settings = get_settings()
+    api_key = settings.litellm_vision_api_key
+
+    ssm_param_name = os.getenv("LITELLM_VISION_API_KEY_PARAMETER")
+    if ssm_param_name:
+        ssm_key = get_ssm_parameter(ssm_param_name)
+        if ssm_key:
+            api_key = ssm_key
+
+    # Fallback to standard key if no vision API key is configured
+    if not api_key:
+        api_key = settings.litellm_api_key
+        ssm_param_name_std = os.getenv("LITELLM_API_KEY_PARAMETER")
+        if ssm_param_name_std:
+            ssm_key_std = get_ssm_parameter(ssm_param_name_std)
+            if ssm_key_std:
+                api_key = ssm_key_std
+
+    return LlmClient(
+        model=settings.litellm_vision_model,
+        api_key=api_key,
+        base_url=settings.litellm_vision_base_url,
+    )
+
+
 from fastapi import Request
 
 

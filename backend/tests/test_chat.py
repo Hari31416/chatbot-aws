@@ -26,13 +26,14 @@ def test_chat_image_upload(test_client: TestClient) -> None:
 
 
 def test_chat_error_handling(test_client: TestClient) -> None:
-    from app.dependencies import get_llm_client
+    from app.dependencies import get_llm_client, get_vision_llm_client
 
     class ErrorLlmClient:
         async def generate(self, messages: list[dict]) -> str:
             raise RuntimeError("API failure")
 
     test_client.app.dependency_overrides[get_llm_client] = lambda: ErrorLlmClient()
+    test_client.app.dependency_overrides[get_vision_llm_client] = lambda: ErrorLlmClient()
 
     response = test_client.post("/chat", json={"message": "Hello"})
     assert response.status_code == 200

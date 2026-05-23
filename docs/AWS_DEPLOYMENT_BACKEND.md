@@ -232,6 +232,10 @@ LITELLM_MODEL=openai/gpt-oss-120b
 LITELLM_API_KEY=nvapi-...
 LITELLM_BASE_URL=https://integrate.api.nvidia.com/v1
 
+LITELLM_VISION_MODEL=gemini/gemini-3.1-flash-lite
+LITELLM_VISION_API_KEY=
+LITELLM_VISION_BASE_URL=
+
 CONTEXT_TTL_SECONDS=3600
 MAX_IMAGE_BYTES=5242880
 ALLOWED_IMAGE_MIME_TYPES=image/png,image/jpeg,image/webp
@@ -246,11 +250,13 @@ MAX_HISTORY_MESSAGES=10
 | `S3_BUCKET_NAME` | CloudFormation ref | `chatbot-uploads-<AccountId>-prod` |
 | `LITELLM_MODEL` | CloudFormation param | `openai/gpt-oss-120b` |
 | `LITELLM_BASE_URL` | CloudFormation param | `https://integrate.api.nvidia.com/v1` |
+| `LITELLM_VISION_MODEL` | CloudFormation param | `gemini/gemini-3.1-flash-lite` |
 | `CONTEXT_TTL_SECONDS` | CloudFormation param | `3600` |
 | `MAX_HISTORY_MESSAGES` | Hardcoded | `10` |
 | `LITELLM_API_KEY_PARAMETER` | Hardcoded | `/chatbot/litellm_api_key` |
+| `LITELLM_VISION_API_KEY_PARAMETER` | Hardcoded | `/chatbot/litellm_vision_api_key` |
 
-> **Note**: `LITELLM_API_KEY` is NOT passed directly. Instead, `LITELLM_API_KEY_PARAMETER` points to the SSM path, and the application resolves and decrypts it at cold start via `get_ssm_parameter()`.
+> **Note**: `LITELLM_API_KEY` and `LITELLM_VISION_API_KEY` are NOT passed directly. Instead, `LITELLM_API_KEY_PARAMETER` and `LITELLM_VISION_API_KEY_PARAMETER` point to their respective SSM paths, and the application resolves and decrypts them at cold start via `get_ssm_parameter()`.
 
 ---
 
@@ -476,21 +482,33 @@ curl https://ltr80pcnvd.execute-api.ap-south-1.amazonaws.com/health
 
 ## 8. Managing Secrets
 
-### View the current LiteLLM API key
+### View the current LiteLLM API keys
 ```bash
+# Standard key
 aws ssm get-parameter --name "/chatbot/litellm_api_key" --with-decryption
+
+# Vision (Gemini) key
+aws ssm get-parameter --name "/chatbot/litellm_vision_api_key" --with-decryption
 ```
 
-### Update the LiteLLM API key
+### Update the LiteLLM API keys
 ```bash
+# Standard key
 aws ssm put-parameter \
   --name "/chatbot/litellm_api_key" \
   --type "SecureString" \
   --value "new-api-key-here" \
   --overwrite
+
+# Vision (Gemini) key
+aws ssm put-parameter \
+  --name "/chatbot/litellm_vision_api_key" \
+  --type "SecureString" \
+  --value "new-gemini-key-here" \
+  --overwrite
 ```
 
-> After updating the key, redeploy (`sam deploy`) so Lambda picks up the change — or wait for the next cold start, since `get_ssm_parameter` is cached with `@lru_cache` per Lambda instance.
+> After updating the keys, redeploy (`sam deploy`) so Lambda picks up the change — or wait for the next cold start, since `get_ssm_parameter` is cached with `@lru_cache` per Lambda instance.
 
 ---
 

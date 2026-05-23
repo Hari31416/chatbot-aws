@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_llm_client, get_repository, get_settings, get_storage
+from app.dependencies import get_llm_client, get_repository, get_settings, get_storage, get_vision_llm_client
 from app.settings import Settings
 from app.services.storage import UploadResult
 
@@ -95,6 +95,7 @@ def test_client() -> TestClient:
     app.dependency_overrides[get_repository] = lambda: repo
     app.dependency_overrides[get_storage] = lambda: storage
     app.dependency_overrides[get_llm_client] = lambda: llm
+    app.dependency_overrides[get_vision_llm_client] = lambda: llm
     app.dependency_overrides[get_settings] = lambda: settings
 
     client = TestClient(app)

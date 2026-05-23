@@ -50,6 +50,16 @@ class Settings(BaseSettings):
         default=None, validation_alias="LITELLM_BASE_URL"
     )
 
+    litellm_vision_model: str = Field(
+        default="gemini/gemini-3.1-flash-lite", validation_alias="LITELLM_VISION_MODEL"
+    )
+    litellm_vision_api_key: str | None = Field(
+        default=None, validation_alias="LITELLM_VISION_API_KEY"
+    )
+    litellm_vision_base_url: str | None = Field(
+        default=None, validation_alias="LITELLM_VISION_BASE_URL"
+    )
+
     @field_validator("allowed_image_mime_types", mode="before")
     @classmethod
     def _parse_mime_types(cls, value: object) -> list[str] | object:

@@ -9,7 +9,7 @@ from uuid import uuid4
 from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from ..dependencies import get_llm_client, get_repository, get_settings, get_storage, get_current_user_id
+from ..dependencies import get_llm_client, get_repository, get_settings, get_storage, get_current_user_id, get_vision_llm_client
 from ..models.schemas import Attachment, ChatImageResponse, ChatRequest, ChatResponse
 from ..services.prompt import build_history_messages, build_user_content
 from ..services.storage import build_image_key, extension_for_mime
@@ -161,7 +161,7 @@ async def chat_image(
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     storage=Depends(get_storage),
-    llm=Depends(get_llm_client),
+    llm=Depends(get_vision_llm_client),
     user_id: str = Depends(get_current_user_id),
 ) -> ChatImageResponse:
     try:

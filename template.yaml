@@ -11,6 +11,10 @@ Parameters:
     Type: String
     Default: openai/gpt-oss-120b
     Description: Model to use for chat generation via LiteLLM
+  LiteLlmVisionModel:
+    Type: String
+    Default: gemini/gemini-3.1-flash-lite
+    Description: Vision model to use for chat generation via LiteLLM
   ContextTtlSeconds:
     Type: Number
     Default: 3600
@@ -39,6 +43,8 @@ Globals:
         S3_BUCKET_NAME: !Ref ChatbotStorageBucket
         LITELLM_MODEL: !Ref LiteLlmModel
         LITELLM_BASE_URL: !Ref LiteLlmBaseUrl
+        LITELLM_VISION_MODEL: !Ref LiteLlmVisionModel
+        LITELLM_VISION_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
         CONTEXT_TTL_SECONDS: !Ref ContextTtlSeconds
         MAX_HISTORY_MESSAGES: 10
         LITELLM_API_KEY_PARAMETER: /chatbot/litellm_api_key
@@ -63,6 +69,8 @@ Resources:
         # Grants read access to SSM SecureString parameter for LLM Keys
         - SSMParameterReadPolicy:
             ParameterName: chatbot/litellm_api_key
+        - SSMParameterReadPolicy:
+            ParameterName: chatbot/litellm_vision_api_key
       Events:
         # Secured proxy routes (inherits DefaultAuthorizer from ChatbotHttpApi)
         GetApiEvent:

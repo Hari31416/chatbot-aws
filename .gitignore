@@ -1,0 +1,6 @@
+.env
+samconfig.toml
+.aws-sam
+.venv
+__pycache__
+.pytest_cache

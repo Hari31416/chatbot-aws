@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Chatbot API deployed on AWS Lambda, DynamoDB, S3, and SSM.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    Description: Deployment environment (dev, staging, prod)
+  LiteLlmModel:
+    Type: String
+    Default: openai/gpt-oss-120b
+    Description: Model to use for chat generation via LiteLLM
+  ContextTtlSeconds:
+    Type: Number
+    Default: 3600
+    Description: Conversation context TTL in seconds
+  LiteLlmBaseUrl:
+    Type: String
+    Default: https://integrate.api.nvidia.com/v1
+    Description: Base URL for LiteLLM API
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+    Description: Python logging level for the Lambda function
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.12
+    Architectures:
+      - arm64
+    Environment:
+
+      Variables:
+        DYNAMODB_TABLE_NAME: !Ref ChatbotTable
+        S3_BUCKET_NAME: !Ref ChatbotStorageBucket
+        LITELLM_MODEL: !Ref LiteLlmModel
+        LITELLM_BASE_URL: !Ref LiteLlmBaseUrl
+        CONTEXT_TTL_SECONDS: !Ref ContextTtlSeconds
+        MAX_HISTORY_MESSAGES: 10
+        LITELLM_API_KEY_PARAMETER: /chatbot/litellm_api_key
+        LOG_LEVEL: !Ref LogLevel
+
+Resources:
+  # -------------------------------------------------------------
+  # Lambda Function
+  # -------------------------------------------------------------
+  ChatbotBackendFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./backend
+      Handler: app.main.handler
+      Policies:
+        # Grants Read/Write access to the DynamoDB Table
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ChatbotTable
+        # Grants Read/Write access to the S3 Bucket
+        - S3CrudPolicy:
+            BucketName: !Ref ChatbotStorageBucket
+        # Grants read access to SSM SecureString parameter for LLM Keys
+        - SSMParameterReadPolicy:
+            ParameterName: chatbot/litellm_api_key
+      Events:
+        # Proxy routes all traffic (ANY) to the FastAPI Mangum handler
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            ApiId: !Ref ChatbotHttpApi
+
+  # -------------------------------------------------------------
+  # API Gateway HTTP API (API v2)
+  # -------------------------------------------------------------
+  ChatbotHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+
+
+  # -------------------------------------------------------------
+  # DynamoDB Single Table
+  # -------------------------------------------------------------
+  ChatbotTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub chatbot-table-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # -------------------------------------------------------------
+  # Amazon S3 Bucket for Uploads
+  # -------------------------------------------------------------
+  ChatbotStorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # Auto-expire uploaded files after 7 days to conserve free tier storage
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTemporaryUploads
+            Status: Enabled
+            ExpirationInDays: 7
+
+Outputs:
+  ApiUrl:
+    Description: "FastAPI base deployment URL"
+    Value: !Sub "https://${ChatbotHttpApi}.execute-api.${AWS::Region}.amazonaws.com"

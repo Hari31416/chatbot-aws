@@ -29,73 +29,38 @@ export function ChatFeed({
   // --- Scrolling and stream-following state refs ---
   const containerRef = React.useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = React.useRef<boolean>(true)
-  const isProgrammaticScrollRef = React.useRef<boolean>(false)
-  const scrollTimeoutRef = React.useRef<any>(null)
   const prevConversationIdRef = React.useRef<string | null>(null)
   const prevMessagesLengthRef = React.useRef<number>(0)
 
-  const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
+  const scrollToBottom = () => {
     const container = containerRef.current
     if (!container) return
 
-    isProgrammaticScrollRef.current = true
-
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current)
-    }
-
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: behavior,
+      behavior: 'auto',
     })
-
-    const delay = behavior === 'smooth' ? 500 : 50
-    scrollTimeoutRef.current = setTimeout(() => {
-      isProgrammaticScrollRef.current = false
-      if (containerRef.current) {
-        const isAtBottom =
-          containerRef.current.scrollHeight -
-          containerRef.current.scrollTop -
-          containerRef.current.clientHeight <=
-          50
-        shouldAutoScrollRef.current = isAtBottom
-      }
-    }, delay)
   }
 
   const handleScroll = () => {
     const container = containerRef.current
     if (!container) return
 
-    // If we're performing a programmatic scroll, ignore the scroll event.
-    if (isProgrammaticScrollRef.current) {
-      return
-    }
-
-    // Check if user is at the bottom (within a 50px tolerance)
+    // Check if the scroll position is near the bottom (within a 100px threshold).
+    // If the user scrolls up (distance > 100px), we pause auto-scrolling to follow the user.
+    // If they scroll back down (distance <= 100px), we resume auto-scrolling.
     const isAtBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight <= 50
+      container.scrollHeight - container.scrollTop - container.clientHeight <= 100
 
-    // If the user scrolled up, isAtBottom will be false, so shouldAutoScroll becomes false.
-    // If they scrolled back to the bottom, it resumes stream following.
     shouldAutoScrollRef.current = isAtBottom
   }
-
-  // Clean up timeouts on unmount
-  React.useEffect(() => {
-    return () => {
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current)
-      }
-    }
-  }, [])
 
   // Reset auto-scroll flag and scroll to bottom when conversation changes
   React.useEffect(() => {
     if (activeConversationId !== prevConversationIdRef.current) {
       prevConversationIdRef.current = activeConversationId
       shouldAutoScrollRef.current = true
-      scrollToBottom('auto') // instant jump for different conversation
+      scrollToBottom() // instant scroll for different conversation
     }
   }, [activeConversationId])
 
@@ -112,19 +77,19 @@ export function ChatFeed({
 
     if (newLength > prevLength) {
       const lastMessage = activeMessages[newLength - 1]
-      // When user sends a message, force smooth scroll to bottom and enable follow
+      // When user sends a message, force scroll to bottom and enable follow
       if (lastMessage.role === 'user') {
         shouldAutoScrollRef.current = true
-        scrollToBottom('smooth')
+        scrollToBottom()
       } else {
         // New assistant message or other event, scroll if we are in auto-scroll mode
         if (shouldAutoScrollRef.current) {
-          scrollToBottom('smooth')
+          scrollToBottom()
         }
       }
     } else if (isStreaming && shouldAutoScrollRef.current) {
       // Stream chunk received while we are following the stream, use instant scroll
-      scrollToBottom('auto')
+      scrollToBottom()
     }
   }, [activeMessages, isStreaming])
 

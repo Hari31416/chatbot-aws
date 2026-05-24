@@ -67,11 +67,17 @@ async def chat(
             "chat request conversation_id=%s user_id=%s", conversation_id, user_id
         )
         created_at = utcnow_iso()
+        # Set dynamic conversation name based on first message (up to 30 chars)
+        conv_name = payload.message[:30] if payload.message else "New Chat..."
+        if payload.message and len(payload.message) > 30:
+            conv_name += "..."
+
         await to_thread.run_sync(
             repo.create_conversation,
             conversation_id,
             created_at,
             user_id,
+            conv_name,
         )
 
         user_message_id = str(uuid4())
@@ -198,11 +204,17 @@ async def chat_image(
             len(data),
         )
         created_at = utcnow_iso()
+        # Set dynamic conversation name based on first message (up to 30 chars) or default
+        conv_name = message[:30] if message else "Image Chat"
+        if message and len(message) > 30:
+            conv_name += "..."
+
         await to_thread.run_sync(
             repo.create_conversation,
             resolved_conversation_id,
             created_at,
             user_id,
+            conv_name,
         )
 
         user_message_id = str(uuid4())

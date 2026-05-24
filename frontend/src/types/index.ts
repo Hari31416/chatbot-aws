@@ -19,6 +19,7 @@ export interface Conversation {
   name: string
   created_at: string
   user_id: string
+  isLocal?: boolean
 }
 
 export interface ChatRequest {

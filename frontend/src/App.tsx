@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { Message, Conversation } from './types'
-import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, updateConversationName, deleteConversationApi } from './services/api'
+import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, deleteConversationApi } from './services/api'
 import { useToast } from '@/components/ui/Toast'
 import { useTheme } from '@/components/theme-provider'
 import {
@@ -138,7 +138,7 @@ export function App() {
     const currentMessages = messages[convId] || []
     if (currentMessages.length === 0) {
       const conv = conversations.find(c => c.id === convId)
-      if (conv && conv.name === 'New Chat...') {
+      if (conv && conv.isLocal) {
         return
       }
     }
@@ -304,17 +304,10 @@ export function App() {
       })
 
       const newName = variables.text.slice(0, 30) || 'Image Chat'
-      const conv = conversations.find(c => c.id === convId)
-      if (conv && conv.name === 'New Chat...') {
-        updateConversationName(convId, newName, apiBaseUrl).catch((err) => {
-          console.error("Failed to update conversation name on backend:", err)
-        })
-      }
-
       setConversations((prev) =>
         prev.map((c) => {
-          if (c.id === convId && c.name === 'New Chat...') {
-            return { ...c, name: newName }
+          if (c.id === convId) {
+            return { ...c, name: c.name === 'New Chat...' ? newName : c.name, isLocal: false }
           }
           return c
         })
@@ -350,7 +343,8 @@ export function App() {
       id: newId,
       name: 'New Chat...',
       created_at: new Date().toISOString(),
-      user_id: userId
+      user_id: userId,
+      isLocal: true
     }
     setConversations((prev) => [newConv, ...prev])
     setActiveConversationId(newId)

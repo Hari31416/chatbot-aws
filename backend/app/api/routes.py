@@ -10,7 +10,7 @@ from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from ..dependencies import get_llm_client, get_repository, get_settings, get_storage, get_current_user_id, get_vision_llm_client
-from ..models.schemas import Attachment, ChatImageResponse, ChatRequest, ChatResponse
+from ..models.schemas import Attachment, ChatImageResponse, ChatRequest, ChatResponse, ConversationResponse, MessageResponse, UpdateConversationRequest
 from ..services.prompt import build_history_messages, build_user_content
 from ..services.storage import build_image_key, extension_for_mime
 from ..utils.time import to_epoch_seconds, utcnow, utcnow_iso
@@ -304,5 +304,116 @@ async def chat_image(
             conversation_id=conversation_id or "unknown",
             error=error_msg,
         )
+
+
+@router.get("/conversations", response_model=list[ConversationResponse])
+async def list_conversations(
+    repo=Depends(get_repository),
+    user_id: str = Depends(get_current_user_id),
+) -> list[ConversationResponse]:
+    items = await to_thread.run_sync(repo.get_user_conversations, user_id)
+    conversations = []
+    for item in items:
+        name = item.get("name") or "New Chat..."
+        conversations.append(
+            ConversationResponse(
+                id=item.get("conversation_id"),
+                name=name,
+                created_at=item.get("created_at"),
+                updated_at=item.get("updated_at", item.get("created_at")),
+                user_id=item.get("user_id"),
+            )
+        )
+    return conversations
+
+
+@router.get("/conversations/{conversation_id}/messages", response_model=list[MessageResponse])
+async def get_conversation_messages(
+    conversation_id: str,
+    repo=Depends(get_repository),
+    storage=Depends(get_storage),
+    user_id: str = Depends(get_current_user_id),
+) -> list[MessageResponse]:
+    meta = await to_thread.run_sync(repo.get_conversation_meta, conversation_id)
+    if not meta or (meta.get("user_id") and meta.get("user_id") != user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    items = await to_thread.run_sync(repo.get_all_messages, conversation_id)
+    messages = []
+    for item in items:
+        attachment_data = item.get("attachment")
+        attachment = None
+        if attachment_data:
+            s3_key = attachment_data.get("s3_key")
+            presigned_url = None
+            if s3_key:
+                presigned_url = storage.generate_presigned_url(s3_key)
+            attachment = Attachment(
+                s3_key=s3_key,
+                mime_type=attachment_data.get("mime_type"),
+                size_bytes=attachment_data.get("size_bytes"),
+                presigned_url=presigned_url,
+            )
+        messages.append(
+            MessageResponse(
+                id=item.get("message_id") or item.get("sk", "").split("#")[-1],
+                role=item.get("role"),
+                content=item.get("content"),
+                created_at=item.get("created_at"),
+                attachment=attachment,
+            )
+        )
+    return messages
+
+
+@router.put("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def update_conversation(
+    conversation_id: str,
+    payload: UpdateConversationRequest,
+    repo=Depends(get_repository),
+    user_id: str = Depends(get_current_user_id),
+) -> ConversationResponse:
+    meta = await to_thread.run_sync(repo.get_conversation_meta, conversation_id)
+    if not meta or (meta.get("user_id") and meta.get("user_id") != user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    updated_at = utcnow_iso()
+    await to_thread.run_sync(
+        repo.update_conversation,
+        conversation_id,
+        payload.name,
+        updated_at,
+    )
+
+    return ConversationResponse(
+        id=conversation_id,
+        name=payload.name,
+        created_at=meta.get("created_at"),
+        updated_at=updated_at,
+        user_id=meta.get("user_id"),
+    )
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    repo=Depends(get_repository),
+    user_id: str = Depends(get_current_user_id),
+) -> dict:
+    meta = await to_thread.run_sync(repo.get_conversation_meta, conversation_id)
+    if not meta or (meta.get("user_id") and meta.get("user_id") != user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    await to_thread.run_sync(repo.delete_conversation, conversation_id)
+    return {"deleted": True, "conversation_id": conversation_id}
 
 

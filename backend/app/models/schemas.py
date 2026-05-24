@@ -29,3 +29,23 @@ class ChatResponse(BaseModel):
 class ChatImageResponse(ChatResponse):
     attachment: Attachment | None = None
 
+
+class ConversationResponse(BaseModel):
+    id: str
+    name: str
+    created_at: str
+    updated_at: str
+    user_id: str | None = None
+
+
+class MessageResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    created_at: str
+    attachment: Attachment | None = None
+
+
+class UpdateConversationRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+

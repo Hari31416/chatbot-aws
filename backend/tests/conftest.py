@@ -17,11 +17,19 @@ class InMemoryConversationRepository:
     def __init__(self) -> None:
         self._messages: dict[str, list[dict]] = {}
         self._context: dict[str, list[dict]] = {}
+        self._conversations: dict[str, dict] = {}
 
     def create_conversation(
-        self, conversation_id: str, created_at: str, user_id: str | None
+        self, conversation_id: str, created_at: str, user_id: str | None, name: str = "New Chat..."
     ) -> None:
         self._messages.setdefault(conversation_id, [])
+        self._conversations[conversation_id] = {
+            "conversation_id": conversation_id,
+            "created_at": created_at,
+            "updated_at": created_at,
+            "user_id": user_id,
+            "name": name,
+        }
 
     def put_message(
         self,
@@ -62,6 +70,30 @@ class InMemoryConversationRepository:
         updated_at: str,
     ) -> None:
         self._context[conversation_id] = messages
+
+    def get_user_conversations(self, user_id: str) -> list[dict]:
+        convs = [
+            c for c in self._conversations.values()
+            if c.get("user_id") == user_id
+        ]
+        convs.sort(key=lambda x: x.get("updated_at", x.get("created_at", "")), reverse=True)
+        return convs
+
+    def get_conversation_meta(self, conversation_id: str) -> dict | None:
+        return self._conversations.get(conversation_id)
+
+    def update_conversation(self, conversation_id: str, name: str, updated_at: str) -> None:
+        if conversation_id in self._conversations:
+            self._conversations[conversation_id]["name"] = name
+            self._conversations[conversation_id]["updated_at"] = updated_at
+
+    def get_all_messages(self, conversation_id: str) -> list[dict]:
+        return self._messages.get(conversation_id, [])
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        self._conversations.pop(conversation_id, None)
+        self._messages.pop(conversation_id, None)
+        self._context.pop(conversation_id, None)
 
 
 class InMemoryStorageService:

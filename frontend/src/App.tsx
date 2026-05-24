@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Message, Conversation } from './types'
-import { sendTextMessage, sendImageMessage, checkHealth } from './services/api'
+import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, updateConversationName, deleteConversationApi } from './services/api'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/Toast'
 import { useTheme } from '@/components/theme-provider'
@@ -107,6 +107,60 @@ export function App() {
       setUserId('admin')
     }
   }, [isLoggedIn])
+
+  // Fetch conversations from backend on mount or when API URL / Login State changes
+  React.useEffect(() => {
+    if (!apiBaseUrl) return
+
+    let active = true
+    async function loadConversations() {
+      try {
+        const backendConvs = await fetchConversations(apiBaseUrl)
+        if (active) {
+          setConversations(backendConvs)
+        }
+      } catch (err: any) {
+        console.error("Failed to fetch conversations from backend:", err)
+      }
+    }
+    loadConversations()
+    return () => {
+      active = false
+    }
+  }, [apiBaseUrl, isLoggedIn, userId])
+
+  // Fetch messages for active conversation from backend when activeConversationId changes
+  React.useEffect(() => {
+    if (!activeConversationId || !apiBaseUrl) return
+
+    const convId = activeConversationId
+    const currentMessages = messages[convId] || []
+    if (currentMessages.length === 0) {
+      const conv = conversations.find(c => c.id === convId)
+      if (conv && conv.name === 'New Chat...') {
+        return
+      }
+    }
+
+    let active = true
+    async function loadMessages() {
+      try {
+        const backendMessages = await fetchConversationMessages(convId, apiBaseUrl)
+        if (active) {
+          setMessages((prev) => ({
+            ...prev,
+            [convId]: backendMessages,
+          }))
+        }
+      } catch (err: any) {
+        console.error(`Failed to fetch messages for conversation ${convId}:`, err)
+      }
+    }
+    loadMessages()
+    return () => {
+      active = false
+    }
+  }, [activeConversationId, apiBaseUrl])
 
   // Scroll to bottom on new messages
   React.useEffect(() => {
@@ -229,10 +283,18 @@ export function App() {
         }
       })
 
+      const newName = variables.text.slice(0, 30) || 'Image Chat'
+      const conv = conversations.find(c => c.id === convId)
+      if (conv && conv.name === 'New Chat...') {
+        updateConversationName(convId, newName, apiBaseUrl).catch((err) => {
+          console.error("Failed to update conversation name on backend:", err)
+        })
+      }
+
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id === convId && c.name === 'New Chat...') {
-            return { ...c, name: variables.text.slice(0, 30) || 'Image Chat' }
+            return { ...c, name: newName }
           }
           return c
         })
@@ -277,6 +339,8 @@ export function App() {
 
   const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+
+    // Optimistic UI updates
     setConversations((prev) => prev.filter((c) => c.id !== id))
     setMessages((prev) => {
       const copy = { ...prev }
@@ -286,6 +350,16 @@ export function App() {
     if (activeConversationId === id) {
       setActiveConversationId(null)
     }
+
+    // Backend deletion
+    deleteConversationApi(id, apiBaseUrl).catch((err) => {
+      console.error(`Failed to delete conversation ${id} from backend:`, err)
+      toast({
+        title: 'Delete Failed',
+        description: 'Could not delete conversation from server.',
+        type: 'error'
+      })
+    })
   }
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -1,4 +1,4 @@
-import type { ChatRequest, ChatResponse } from "../types"
+import type { ChatRequest, ChatResponse, Conversation, Message } from "../types"
 import { getCurrentSessionToken } from "./auth"
 
 /**
@@ -122,4 +122,132 @@ export async function sendImageMessage(
     throw new ApiError(data.error)
   }
   return data
+}
+
+/**
+ * Fetches all conversations of the user
+ */
+export async function fetchConversations(apiBaseUrl: string): Promise<Conversation[]> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/conversations`, {
+    method: "GET",
+    headers,
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    throw new ApiError(
+      errorBody.detail || `Failed to fetch conversations: ${response.statusText}`,
+      response.status
+    )
+  }
+
+  return response.json()
+}
+
+/**
+ * Fetches all messages in a specific conversation
+ */
+export async function fetchConversationMessages(
+  conversationId: string,
+  apiBaseUrl: string
+): Promise<Message[]> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/conversations/${conversationId}/messages`, {
+    method: "GET",
+    headers,
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    throw new ApiError(
+      errorBody.detail || `Failed to fetch messages: ${response.statusText}`,
+      response.status
+    )
+  }
+
+  return response.json()
+}
+
+/**
+ * Updates the conversation name
+ */
+export async function updateConversationName(
+  conversationId: string,
+  name: string,
+  apiBaseUrl: string
+): Promise<Conversation> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/conversations/${conversationId}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ name }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    throw new ApiError(
+      errorBody.detail || `Failed to update conversation name: ${response.statusText}`,
+      response.status
+    )
+  }
+
+  return response.json()
+}
+
+/**
+ * Deletes a conversation and its messages
+ */
+export async function deleteConversationApi(
+  conversationId: string,
+  apiBaseUrl: string
+): Promise<{ deleted: boolean; conversation_id: string }> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/conversations/${conversationId}`, {
+    method: "DELETE",
+    headers,
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    throw new ApiError(
+      errorBody.detail || `Failed to delete conversation: ${response.statusText}`,
+      response.status
+    )
+  }
+
+  return response.json()
 }

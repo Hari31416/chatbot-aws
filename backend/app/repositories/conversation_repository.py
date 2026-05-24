@@ -21,10 +21,10 @@ class ConversationRepository:
         self._table = table
 
     def create_conversation(
-        self, conversation_id: str, created_at: str, user_id: str | None
+        self, conversation_id: str, created_at: str, user_id: str | None, name: str = "New Chat..."
     ) -> None:
         logger.debug(
-            "create_conversation conversation_id=%s user_id=%s", conversation_id, user_id
+            "create_conversation conversation_id=%s user_id=%s name=%s", conversation_id, user_id, name
         )
         item = {
             "pk": pk_for_conversation(conversation_id),
@@ -32,6 +32,7 @@ class ConversationRepository:
             "conversation_id": conversation_id,
             "created_at": created_at,
             "updated_at": created_at,
+            "name": name,
         }
         if user_id:
             item["user_id"] = user_id
@@ -131,3 +132,53 @@ class ConversationRepository:
                 "updated_at": updated_at,
             }
         )
+
+    def get_user_conversations(self, user_id: str) -> list[dict]:
+        logger.debug("get_user_conversations user_id=%s", user_id)
+        response = self._table.query(
+            IndexName="UserConversationsIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("sk").eq("META"),
+        )
+        items = response.get("Items", [])
+        items.sort(key=lambda x: x.get("updated_at", x.get("created_at", "")), reverse=True)
+        return items
+
+    def get_conversation_meta(self, conversation_id: str) -> dict | None:
+        logger.debug("get_conversation_meta conversation_id=%s", conversation_id)
+        response = self._table.get_item(
+            Key={"pk": pk_for_conversation(conversation_id), "sk": "META"}
+        )
+        return response.get("Item")
+
+    def update_conversation(self, conversation_id: str, name: str, updated_at: str) -> None:
+        logger.debug("update_conversation conversation_id=%s name=%s", conversation_id, name)
+        self._table.update_item(
+            Key={"pk": pk_for_conversation(conversation_id), "sk": "META"},
+            UpdateExpression="SET #name = :name, updated_at = :updated_at",
+            ExpressionAttributeNames={"#name": "name"},
+            ExpressionAttributeValues={":name": name, ":updated_at": updated_at},
+        )
+
+    def get_all_messages(self, conversation_id: str) -> list[dict]:
+        logger.debug("get_all_messages conversation_id=%s", conversation_id)
+        response = self._table.query(
+            KeyConditionExpression=Key("pk").eq(pk_for_conversation(conversation_id))
+            & Key("sk").begins_with("MSG#"),
+            ScanIndexForward=True,
+        )
+        return response.get("Items", [])
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        logger.debug("delete_conversation conversation_id=%s", conversation_id)
+        pk = pk_for_conversation(conversation_id)
+        response = self._table.query(
+            KeyConditionExpression=Key("pk").eq(pk)
+        )
+        items = response.get("Items", [])
+        if not items:
+            return
+        with self._table.batch_writer() as batch:
+            for item in items:
+                batch.delete_item(
+                    Key={"pk": item["pk"], "sk": item["sk"]}
+                )

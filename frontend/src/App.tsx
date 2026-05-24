@@ -165,10 +165,6 @@ export function App() {
     }
   }, [activeConversationId, apiBaseUrl])
 
-  // Scroll to bottom on new messages
-  React.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, activeConversationId])
 
   // Automatic logout on unauthorized API errors (session expired)
   React.useEffect(() => {
@@ -636,6 +632,8 @@ export function App() {
           setInputText={setInputText}
           isSidebarOpen={isSidebarOpen}
           messagesEndRef={messagesEndRef}
+          isStreaming={isStreaming}
+          activeConversationId={activeConversationId}
         />
 
         {/* Input Bar */}

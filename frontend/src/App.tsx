@@ -168,6 +168,25 @@ export function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, activeConversationId])
 
+  // Automatic logout on unauthorized API errors (session expired)
+  React.useEffect(() => {
+    const handleUnauthorized = () => {
+      signOutUser()
+      setIsLoggedIn(false)
+      setActiveConversationId(null)
+      toast({
+        title: 'Session Expired',
+        description: 'Your session has expired. Please log in again.',
+        type: 'error'
+      })
+    }
+
+    window.addEventListener('unauthorized-api-error', handleUnauthorized)
+    return () => {
+      window.removeEventListener('unauthorized-api-error', handleUnauthorized)
+    }
+  }, [toast])
+
   // --- Authentication Handlers ---
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

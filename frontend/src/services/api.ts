@@ -14,6 +14,25 @@ export class ApiError extends Error {
 }
 
 /**
+ * Processes responses from the API, throwing ApiError on errors and dispatching a global
+ * event on 401 Unauthorized status.
+ */
+async function handleResponse<T>(response: Response, defaultErrorMessage: string): Promise<T> {
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    const status = response.status
+    if (status === 401) {
+      window.dispatchEvent(new Event("unauthorized-api-error"))
+    }
+    throw new ApiError(
+      errorBody.detail || `${defaultErrorMessage}: ${response.statusText}`,
+      status
+    )
+  }
+  return response.json() as Promise<T>
+}
+
+/**
  * Checks connection health of backend API.
  */
 export async function checkHealth(apiBaseUrl: string): Promise<boolean> {
@@ -57,15 +76,10 @@ export async function sendTextMessage(
     body: JSON.stringify(payload),
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new ApiError(
-      errorBody.detail || `Server responded with ${response.status}: ${response.statusText}`,
-      response.status
-    )
-  }
-
-  const data: ChatResponse = await response.json()
+  const data = await handleResponse<ChatResponse>(
+    response,
+    `Server responded with ${response.status}`
+  )
   if (data.error) {
     throw new ApiError(data.error)
   }
@@ -109,15 +123,10 @@ export async function sendImageMessage(
     body: formData,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new ApiError(
-      errorBody.detail || `Server responded with ${response.status}: ${response.statusText}`,
-      response.status
-    )
-  }
-
-  const data: ChatResponse = await response.json()
+  const data = await handleResponse<ChatResponse>(
+    response,
+    `Server responded with ${response.status}`
+  )
   if (data.error) {
     throw new ApiError(data.error)
   }
@@ -142,15 +151,10 @@ export async function fetchConversations(apiBaseUrl: string): Promise<Conversati
     headers,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new ApiError(
-      errorBody.detail || `Failed to fetch conversations: ${response.statusText}`,
-      response.status
-    )
-  }
-
-  return response.json()
+  return handleResponse<Conversation[]>(
+    response,
+    "Failed to fetch conversations"
+  )
 }
 
 /**
@@ -174,15 +178,10 @@ export async function fetchConversationMessages(
     headers,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new ApiError(
-      errorBody.detail || `Failed to fetch messages: ${response.statusText}`,
-      response.status
-    )
-  }
-
-  return response.json()
+  return handleResponse<Message[]>(
+    response,
+    "Failed to fetch messages"
+  )
 }
 
 /**
@@ -209,15 +208,10 @@ export async function updateConversationName(
     body: JSON.stringify({ name }),
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new ApiError(
-      errorBody.detail || `Failed to update conversation name: ${response.statusText}`,
-      response.status
-    )
-  }
-
-  return response.json()
+  return handleResponse<Conversation>(
+    response,
+    "Failed to update conversation name"
+  )
 }
 
 /**
@@ -241,13 +235,8 @@ export async function deleteConversationApi(
     headers,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    throw new ApiError(
-      errorBody.detail || `Failed to delete conversation: ${response.statusText}`,
-      response.status
-    )
-  }
-
-  return response.json()
+  return handleResponse<{ deleted: boolean; conversation_id: string }>(
+    response,
+    "Failed to delete conversation"
+  )
 }

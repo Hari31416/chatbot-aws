@@ -61,15 +61,15 @@ ChatbotBackendFunction:
   Type: AWS::Serverless::Function
   Properties:
     CodeUri: ./backend
-    # Change Handler: LWA runs uvicorn directly, bypasses main.py handler.
-    # Note: AWS Lambda Web Adapter reads PORT environment variable (default: 8080)
-    Handler: app.main.app 
+    # Set Handler to run.sh so that the LWA execution wrapper executes it at startup
+    Handler: run.sh
     Layers:
       # Add AWS Lambda Web Adapter Layer (verify regional ARN)
-      - !Sub arn:aws:lambda:${AWS::Region}:764866452798:layer:lambda-adapter:8
+      - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:27
     Environment:
       Variables:
         # Enable response streaming mode in LWA
+        AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
         AWS_LWA_INVOKE_MODE: response_stream
         PORT: "8080"
         # Database & Model variables remain the same...
@@ -77,17 +77,11 @@ ChatbotBackendFunction:
     # 2. Expose the Lambda Function URL with Response Streaming Mode enabled
     FunctionUrlConfig:
       AuthType: NONE # Managed inside the FastAPI app using JWT validation
-      InvokeMode: RESPONSE_STREAMING
-      Cors:
-        AllowOrigins:
-          - "*" # Configure specific origins for production
-        AllowHeaders:
-          - "Content-Type"
-          - "Authorization"
-        AllowMethods:
-          - "POST"
-          - "GET"
-          - "OPTIONS"
+      InvokeMode: RESPONSE_STREAM
+      # Note: We delegate CORS entirely to FastAPI (using CORSMiddleware in main.py)
+      # instead of configuring it here. This avoids duplicate CORS headers
+      # (e.g. Access-Control-Allow-Origin) which would cause the browser to block calls.
+```
 ```
 
 ---

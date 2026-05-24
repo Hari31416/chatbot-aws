@@ -60,7 +60,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ./backend
-      Handler: app.main.handler
+      Handler: run.sh
       Layers:
         - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:27
       Policies:
@@ -83,15 +83,7 @@ Resources:
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: RESPONSE_STREAM
-        Cors:
-          AllowOrigins:
-            - "*"
-          AllowHeaders:
-            - Content-Type
-            - Authorization
-          AllowMethods:
-            - GET
-            - POST
+
       Events:
         # Secured proxy routes (inherits DefaultAuthorizer from ChatbotHttpApi)
         GetApiEvent:
@@ -298,7 +290,7 @@ Outputs:
     Value: !Sub "https://${ChatbotHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   FunctionUrl:
     Description: "FastAPI Lambda Function URL for response streaming"
-    Value: !Ref ChatbotBackendFunctionUrl
+    Value: !GetAtt ChatbotBackendFunctionUrl.FunctionUrl
   FrontendUrl:
     Description: "S3 Static Website Hosting URL for the Chatbot React Frontend"
     Value: !GetAtt ChatbotFrontendBucket.WebsiteURL

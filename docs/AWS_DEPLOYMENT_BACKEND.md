@@ -103,7 +103,7 @@ handler = Mangum(app)   # API Gateway handler
 
 However, for **SSE response streaming**, Mangum and API Gateway are bypassed. Instead, the **AWS Lambda Web Adapter (LWA)** layer runs in the Lambda runtime container, listens on `PORT: 8080`, and forwards requests directly to the FastAPI `app` object using a standard `uvicorn` web server.
 
-The SAM template specifies `Handler: app.main.handler` and configures the `AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap` environment variable. At cold start, the execution wrapper intercepts the invocation and executes `run.sh` inside the function directory, starting Uvicorn dynamically on port 8080.
+The SAM template specifies `Handler: run.sh` and configures the `AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap` environment variable. At cold start, the execution wrapper intercepts the invocation and executes `run.sh` inside the function directory, starting Uvicorn dynamically on port 8080.
 
 ---
 
@@ -303,7 +303,7 @@ from mangum import Mangum
 handler = Mangum(app)
 ```
 
-The SAM template's `Handler: app.main.handler` points Lambda to this variable.
+The SAM template's `Handler: run.sh` points Lambda to execute this script, which then launches Uvicorn.
 
 ---
 

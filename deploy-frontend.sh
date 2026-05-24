@@ -6,11 +6,12 @@ echo "🔍 1. Fetching active AWS stack outputs..."
 echo "========================================="
 STACK_NAME="${1:-chat}" # Default to "chat", or pass stack name as the first argument
 
-# Retrieve ApiUrl, FrontendBucket and FrontendUrl
+# Retrieve FunctionUrl, FrontendBucket and FrontendUrl
 API_URL=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
-  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" \
   --output text)
+
 
 FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \

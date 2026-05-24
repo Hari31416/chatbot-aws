@@ -15,10 +15,10 @@ To achieve true chunk-by-chunk token streaming, we updated `template.yaml` to de
    - Set `AuthType: NONE` (shifts authentication from API Gateway Authorizers to in-app PyJWT middleware).
 2. **AWS Lambda Web Adapter (LWA) Layer**:
    - Attached the public AWS-published `LambdaAdapterLayerArm64:27` layer.
-   - Kept handler as `app.main.handler` and added `AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap` environment variable. At cold start, LWA intercepts the execution and runs Uvicorn on `PORT: 8080` via a startup script named `run.sh` in the root folder.
+   - Set the handler to `run.sh` and added the `AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap` environment variable. At cold start, the Lambda wrapper intercepts the execution and runs `run.sh` inside the function root directory, launching Uvicorn on `PORT: 8080` (using `exec python -m uvicorn` to properly resolve the package within Lambda's `$PATH`).
    - Set `AWS_LWA_INVOKE_MODE: response_stream` and `PORT: "8080"` env vars.
 3. **CORS Optimization**:
-   - Defined custom CORS mappings inside `FunctionUrlConfig` to allow cross-origin browser `fetch` requests with `Authorization` and `Content-Type` headers.
+   - Delegated CORS preflight and headers handling entirely to the application layer (FastAPI's `CORSMiddleware`). This eliminates the duplicate CORS headers conflict (which happens if both the AWS Function URL infrastructure and FastAPI inject `Access-Control-Allow-Origin` simultaneously), completely resolving browser CORS blocking.
 
 ---
 

@@ -7,7 +7,7 @@ from functools import lru_cache
 
 import boto3
 from botocore.config import Config
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 
 from .repositories.conversation_repository import ConversationRepository
 from .services.llm import LlmClient
@@ -147,6 +147,11 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
 
         # Local development fallback for short dummy tokens (e.g., "admin")
         if token and (len(token) < 50 or token.count(".") != 2):
+            if settings.cognito_user_pool_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token format"
+                )
             return token
 
         # If it looks like a JWT token, attempt to parse and verify it
@@ -178,6 +183,11 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
                         options={"verify_exp": True},
                     )
                     return payload.get("sub") or payload.get("email") or payload.get("cognito:username")
+                
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token key ID not found in Cognito JWKS"
+                )
 
             # Fallback 1: Decode without signature verification (useful for local dev)
             logger.warning("JWKS validation skipped or key not found. Performing unverified decode for fallback.")
@@ -185,7 +195,12 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
             return payload.get("sub") or payload.get("email") or payload.get("cognito:username") or "admin"
 
         except Exception as e:
-            logger.warning("JWT validation failed: %s. Falling back to unverified decode.", e)
+            logger.warning("JWT validation failed: %s", e)
+            if settings.cognito_user_pool_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Signature verification failed: {str(e)}"
+                )
             try:
                 import jwt
                 payload = jwt.decode(token, options={"verify_signature": False})
@@ -197,6 +212,13 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
     x_user = request.headers.get("X-User-ID")
     if x_user:
         return x_user
+
+    # Enforce strict auth in production if no authorization header is provided
+    if settings.cognito_user_pool_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header is required"
+        )
 
     return "admin"
 

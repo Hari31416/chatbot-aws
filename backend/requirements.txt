@@ -33,6 +33,8 @@ certifi==2026.5.20
     #   httpcore
     #   httpx
     #   requests
+cffi==2.0.0 ; platform_python_implementation != 'PyPy'
+    # via cryptography
 charset-normalizer==3.4.7
     # via requests
 click==8.4.0
@@ -44,6 +46,8 @@ colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   click
     #   tqdm
+cryptography==48.0.0
+    # via chatbot-backend
 distro==1.9.0
     # via openai
 fastapi==0.136.1
@@ -115,6 +119,8 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
+pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+    # via cffi
 pydantic==2.13.4
     # via
     #   fastapi
@@ -127,6 +133,8 @@ pydantic-settings==2.14.1
     # via chatbot-backend
 pygments==2.20.0
     # via rich
+pyjwt==2.13.0
+    # via chatbot-backend
 python-dateutil==2.9.0.post0
     # via botocore
 python-dotenv==1.2.2

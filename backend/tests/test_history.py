@@ -22,7 +22,7 @@ def test_history_workflow(test_client: TestClient) -> None:
     conversations = response.json()
     assert len(conversations) == 1
     assert conversations[0]["id"] == "test-conv-123"
-    assert conversations[0]["name"] == "New Chat..."
+    assert conversations[0]["name"] == "Hello from testing!"
 
     # 3. Get messages for the conversation
     response = test_client.get(

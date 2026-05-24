@@ -4,7 +4,7 @@ set -e
 echo "========================================="
 echo "🔍 1. Fetching active AWS stack outputs..."
 echo "========================================="
-STACK_NAME="chat" # Taken from samconfig.toml
+STACK_NAME="${1:-chat}" # Default to "chat", or pass stack name as the first argument
 
 # Retrieve ApiUrl, FrontendBucket and FrontendUrl
 API_URL=$(aws cloudformation describe-stacks \

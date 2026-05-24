@@ -240,3 +240,118 @@ export async function deleteConversationApi(
     "Failed to delete conversation"
   )
 }
+
+/**
+ * Progressive chunk structure for Response Streaming
+ */
+export interface StreamChunk {
+  text?: string
+  conversation_id?: string
+  assistant_message_id?: string
+  user_message_id?: string
+  error?: string
+}
+
+/**
+ * Sends a chat message and reads a real-time event-stream response using the standard Fetch API stream reader
+ */
+export async function sendChatMessageStream(
+  message: string,
+  apiBaseUrl: string,
+  token: string | null,
+  conversationId?: string | null,
+  onChunk?: (text: string) => void,
+  onComplete?: (finalConversationId: string, assistantMsgId: string, userMsgId: string) => void,
+  onError?: (error: string) => void
+): Promise<void> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    }
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${cleanUrl}/chat/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      let errorMsg = "Failed to initiate stream"
+      try {
+        const errorJSON = JSON.parse(errorText)
+        errorMsg = errorJSON.detail || errorMsg
+      } catch {
+        errorMsg = errorText || errorMsg
+      }
+      throw new Error(errorMsg)
+    }
+
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder("utf-8")
+    if (!reader) {
+      throw new Error("No stream reader available")
+    }
+
+    let buffer = ""
+    let activeConversationId = conversationId || ""
+    let activeAssistantMsgId = ""
+    let activeUserMsgId = ""
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n\n")
+
+      // Save trailing incomplete line back to the buffer
+      buffer = lines.pop() || ""
+
+      for (const line of lines) {
+        if (!line.trim() || !line.startsWith("data: ")) continue
+
+        const dataStr = line.replace(/^data:\s*/, "")
+        if (dataStr === "[DONE]") continue
+
+        try {
+          const chunk: StreamChunk = JSON.parse(dataStr)
+          if (chunk.error) {
+            if (onError) onError(chunk.error)
+            return
+          }
+          if (chunk.text && onChunk) {
+            onChunk(chunk.text)
+          }
+          if (chunk.conversation_id) {
+            activeConversationId = chunk.conversation_id
+          }
+          if (chunk.assistant_message_id) {
+            activeAssistantMsgId = chunk.assistant_message_id
+          }
+          if (chunk.user_message_id) {
+            activeUserMsgId = chunk.user_message_id
+          }
+        } catch (e) {
+          console.warn("Failed to parse SSE chunk", dataStr, e)
+        }
+      }
+    }
+
+    if (onComplete && activeConversationId) {
+      onComplete(activeConversationId, activeAssistantMsgId, activeUserMsgId)
+    }
+  } catch (error: any) {
+    if (onError) {
+      onError(error.message || "An unexpected error occurred during streaming")
+    }
+  }
+}

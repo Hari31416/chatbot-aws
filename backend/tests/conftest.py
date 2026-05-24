@@ -12,6 +12,23 @@ class FakeLlmClient:
     async def generate(self, messages: list[dict]) -> str:
         return "stubbed response"
 
+    async def astream(self, messages: list[dict]):
+        class MockDelta:
+            def __init__(self, content: str):
+                self.content = content
+
+        class MockChoice:
+            def __init__(self, content: str):
+                self.delta = MockDelta(content)
+
+        class MockChunk:
+            def __init__(self, content: str):
+                self.choices = [MockChoice(content)]
+
+        tokens = ["stubbed", " ", "response"]
+        for token in tokens:
+            yield MockChunk(token)
+
 
 class InMemoryConversationRepository:
     def __init__(self) -> None:

@@ -42,6 +42,13 @@ class Settings(BaseSettings):
         default=10, validation_alias="MAX_HISTORY_MESSAGES"
     )
 
+    cognito_user_pool_id: str | None = Field(
+        default=None, validation_alias="COGNITO_USER_POOL_ID"
+    )
+    cognito_client_id: str | None = Field(
+        default=None, validation_alias="COGNITO_CLIENT_ID"
+    )
+
     litellm_model: str = Field(default="gpt-4o-mini", validation_alias="LITELLM_MODEL")
     litellm_api_key: str | None = Field(
         default=None, validation_alias="LITELLM_API_KEY"

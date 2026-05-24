@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from dataclasses import asdict
 from datetime import timedelta
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from ..dependencies import get_llm_client, get_repository, get_settings, get_storage, get_current_user_id, get_vision_llm_client
 from ..models.schemas import Attachment, ChatImageResponse, ChatRequest, ChatResponse, ConversationResponse, MessageResponse, UpdateConversationRequest
@@ -156,6 +158,102 @@ async def chat(
         return ChatResponse(
             conversation_id=payload.conversation_id or "unknown",
             error=error_msg,
+        )
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    payload: ChatRequest,
+    repo=Depends(get_repository),
+    settings=Depends(get_settings),
+    llm=Depends(get_llm_client),
+    user_id: str = Depends(get_current_user_id),
+) -> StreamingResponse:
+    try:
+        conversation_id = payload.conversation_id or str(uuid4())
+        logger.info(
+            "chat_stream request conversation_id=%s user_id=%s", conversation_id, user_id
+        )
+        created_at = utcnow_iso()
+        # Set dynamic conversation name based on first message (up to 30 chars)
+        conv_name = payload.message[:30] if payload.message else "New Chat..."
+        if payload.message and len(payload.message) > 30:
+            conv_name += "..."
+
+        await to_thread.run_sync(
+            repo.create_conversation,
+            conversation_id,
+            created_at,
+            user_id,
+            conv_name,
+        )
+
+        user_message_id = str(uuid4())
+        await to_thread.run_sync(
+            repo.put_message,
+            conversation_id,
+            user_message_id,
+            "user",
+            payload.message,
+            created_at,
+            None,
+            user_id,
+        )
+
+        history = await _load_history(repo, conversation_id, settings.max_history_messages)
+        messages = build_history_messages(history)
+        messages.append({"role": "user", "content": payload.message})
+
+        async def token_generator():
+            accumulated_text = ""
+            assistant_message_id = str(uuid4())
+            try:
+                # Call streaming method of LiteLLM/OpenAI client
+                async for chunk in llm.astream(messages):
+                    token = chunk.choices[0].delta.content or ""
+                    if token:
+                        accumulated_text += token
+                        # Yield compliant SSE event chunk
+                        yield f"data: {json.dumps({'text': token, 'conversation_id': conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': user_message_id})}\n\n"
+
+                # Stream succeeded, now save complete assistant response in DB
+                assistant_created_at = utcnow_iso()
+                await to_thread.run_sync(
+                    repo.put_message,
+                    conversation_id,
+                    assistant_message_id,
+                    "assistant",
+                    accumulated_text,
+                    assistant_created_at,
+                    None,
+                    None,
+                )
+
+                # Update context cache
+                await _update_context(
+                    repo,
+                    conversation_id,
+                    settings.max_history_messages,
+                    settings.context_ttl_seconds,
+                    history,
+                    payload.message,
+                    accumulated_text,
+                )
+
+                # Send close token
+                yield "data: [DONE]\n\n"
+
+            except Exception as e:
+                logger.exception("Error in LLM stream generator for conversation_id=%s", conversation_id)
+                yield f"data: {json.dumps({'error': 'Stream generation interrupted', 'details': str(e)})}\n\n"
+
+        return StreamingResponse(token_generator(), media_type="text/event-stream")
+
+    except Exception as e:
+        logger.exception("chat_stream initialization failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
         )
 
 

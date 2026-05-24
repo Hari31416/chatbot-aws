@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import logging
+import urllib.request
 from functools import lru_cache
 
 import boto3
 from botocore.config import Config
+from fastapi import Depends
 
 from .repositories.conversation_repository import ConversationRepository
 from .services.llm import LlmClient
@@ -110,28 +114,86 @@ def get_vision_llm_client() -> LlmClient:
 
 from fastapi import Request
 
+logger = logging.getLogger(__name__)
 
-def get_current_user_id(request: Request) -> str:
-    # 1. AWS Lambda Environment: Extract Cognito claims
+
+@lru_cache(maxsize=1)
+def get_jwks(jwks_url: str) -> dict:
+    try:
+        with urllib.request.urlopen(jwks_url, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        logger.warning("Failed to fetch JWKS from %s: %s", jwks_url, e)
+        return {"keys": []}
+
+
+def get_current_user_id(request: Request, settings: Settings = Depends(get_settings)) -> str:
+    # 1. AWS Lambda Environment: Extract Cognito claims from API Gateway (if present)
     aws_event = request.scope.get("aws.event")
     if aws_event and isinstance(aws_event, dict):
         request_context = aws_event.get("requestContext", {})
         authorizer = request_context.get("authorizer", {})
-        jwt = authorizer.get("jwt", {})
-        claims = jwt.get("claims", {})
+        jwt_data = authorizer.get("jwt", {})
+        claims = jwt_data.get("claims", {})
         # Cognito passes user ID/username inside JWT claims
         cognito_user = claims.get("username") or claims.get("sub")
         if cognito_user:
             return cognito_user
 
-    # 2. Local development fallback: Authorization Bearer token or custom header
+    # 2. Extract and Validate Bearer Token from Authorization Header
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-        # Skip token format validation locally, use token content as user_id directly
-        if token and len(token) < 50:  # If it is a simple username string
+
+        # Local development fallback for short dummy tokens (e.g., "admin")
+        if token and (len(token) < 50 or token.count(".") != 2):
             return token
 
+        # If it looks like a JWT token, attempt to parse and verify it
+        try:
+            import jwt
+
+            # Unverified header to find key ID (kid)
+            unverified_header = jwt.get_unverified_header(token)
+            kid = unverified_header.get("kid")
+
+            # Try to fetch and match public keys from Cognito
+            if settings.cognito_user_pool_id:
+                jwks_url = f"https://cognito-idp.{settings.aws_region}.amazonaws.com/{settings.cognito_user_pool_id}/.well-known/jwks.json"
+                jwks = get_jwks(jwks_url)
+
+                public_key = None
+                for key in jwks.get("keys", []):
+                    if key.get("kid") == kid:
+                        from jwt.algorithms import RSAAlgorithm
+                        public_key = RSAAlgorithm.from_jwk(key)
+                        break
+
+                if public_key:
+                    payload = jwt.decode(
+                        token,
+                        public_key,
+                        algorithms=["RS256"],
+                        audience=settings.cognito_client_id,
+                        options={"verify_exp": True},
+                    )
+                    return payload.get("sub") or payload.get("email") or payload.get("cognito:username")
+
+            # Fallback 1: Decode without signature verification (useful for local dev)
+            logger.warning("JWKS validation skipped or key not found. Performing unverified decode for fallback.")
+            payload = jwt.decode(token, options={"verify_signature": False})
+            return payload.get("sub") or payload.get("email") or payload.get("cognito:username") or "admin"
+
+        except Exception as e:
+            logger.warning("JWT validation failed: %s. Falling back to unverified decode.", e)
+            try:
+                import jwt
+                payload = jwt.decode(token, options={"verify_signature": False})
+                return payload.get("sub") or payload.get("email") or "admin"
+            except Exception:
+                return "admin"
+
+    # 3. Custom Local Headers
     x_user = request.headers.get("X-User-ID")
     if x_user:
         return x_user

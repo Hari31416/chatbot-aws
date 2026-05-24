@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { Message, Conversation } from './types'
-import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, deleteConversationApi } from './services/api'
+import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, deleteConversationApi, sendChatMessageStream } from './services/api'
 import { useToast } from '@/components/ui/Toast'
 import { useTheme } from '@/components/theme-provider'
 import {
@@ -10,7 +10,8 @@ import {
   signInUser,
   signOutUser,
   isUserLoggedIn,
-  getCurrentUserEmail
+  getCurrentUserEmail,
+  getCurrentSessionToken
 } from './services/auth'
 import { AuthGate } from './components/AuthGate'
 import { Sidebar } from './components/Sidebar'
@@ -63,6 +64,7 @@ export function App() {
   })
 
   const [inputText, setInputText] = React.useState('')
+  const [isStreaming, setIsStreaming] = React.useState(false)
   const [selectedImage, setSelectedImage] = React.useState<File | null>(null)
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -457,11 +459,108 @@ export function App() {
       }
     })
 
-    sendMutation.mutate({
-      text: inputText.trim(),
-      imageFile: selectedImage,
-      convId: currentConvId
-    })
+    if (selectedImage) {
+      sendMutation.mutate({
+        text: inputText.trim(),
+        imageFile: selectedImage,
+        convId: currentConvId
+      })
+    } else {
+      setIsStreaming(true)
+
+      const tempAssistantMsgId = 'temp-assistant-msg'
+      const tempAssistantMsg: Message = {
+        id: tempAssistantMsgId,
+        role: 'assistant',
+        content: '',
+        created_at: new Date().toISOString()
+      }
+
+      setMessages((prev) => {
+        const currentList = prev[currentConvId!] || []
+        return {
+          ...prev,
+          [currentConvId!]: [...currentList, tempAssistantMsg]
+        }
+      })
+
+      const token = getCurrentSessionToken()
+      sendChatMessageStream(
+        inputText.trim(),
+        apiBaseUrl,
+        token,
+        currentConvId,
+        (chunkText) => {
+          setMessages((prev) => {
+            const currentList = prev[currentConvId!] || []
+            return {
+              ...prev,
+              [currentConvId!]: currentList.map((m) =>
+                m.id === tempAssistantMsgId ? { ...m, content: m.content + chunkText } : m
+              )
+            }
+          })
+        },
+        (finalConvId, assistantMsgId, userMsgId) => {
+          setMessages((prev) => {
+            const currentList = prev[finalConvId] || []
+            return {
+              ...prev,
+              [finalConvId]: currentList.map((m) => {
+                if (m.id === 'temp-user-msg') {
+                  return { ...m, id: userMsgId || m.id }
+                }
+                if (m.id === tempAssistantMsgId) {
+                  return { ...m, id: assistantMsgId || m.id }
+                }
+                return m
+              })
+            }
+          })
+
+          const newName = inputText.trim().slice(0, 30) || 'New Chat...'
+          setConversations((prev) =>
+            prev.map((c) => {
+              if (c.id === currentConvId) {
+                return { ...c, id: finalConvId, name: c.name === 'New Chat...' ? newName : c.name, isLocal: false }
+              }
+              return c
+            })
+          )
+
+          if (activeConversationId === currentConvId && currentConvId !== finalConvId) {
+            setActiveConversationId(finalConvId)
+          }
+
+          setIsStreaming(false)
+        },
+        (errorMsg) => {
+          toast({
+            title: 'Error streaming response',
+            description: errorMsg,
+            type: 'error'
+          })
+
+          setMessages((prev) => {
+            const currentList = prev[currentConvId!] || []
+            return {
+              ...prev,
+              [currentConvId!]: currentList.map((m) => {
+                if (m.id === 'temp-user-msg') {
+                  return { ...m, error: errorMsg }
+                }
+                if (m.id === tempAssistantMsgId) {
+                  return { ...m, error: errorMsg }
+                }
+                return m
+              })
+            }
+          })
+
+          setIsStreaming(false)
+        }
+      )
+    }
 
     setInputText('')
     handleRemoveImage()
@@ -532,7 +631,7 @@ export function App() {
         {/* Chat Feed */}
         <ChatFeed
           activeMessages={activeMessages}
-          isPending={sendMutation.isPending}
+          isPending={sendMutation.isPending || (isStreaming && !(activeMessages[activeMessages.length - 1]?.role === 'assistant' && activeMessages[activeMessages.length - 1]?.content.length > 0))}
           setLightboxImage={setLightboxImage}
           setInputText={setInputText}
           isSidebarOpen={isSidebarOpen}
@@ -549,7 +648,7 @@ export function App() {
           handleImageChange={handleImageChange}
           handleRemoveImage={handleRemoveImage}
           fileInputRef={fileInputRef}
-          isPending={sendMutation.isPending}
+          isPending={sendMutation.isPending || isStreaming}
         />
       </main>
 

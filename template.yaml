@@ -49,6 +49,8 @@ Globals:
         MAX_HISTORY_MESSAGES: 10
         LITELLM_API_KEY_PARAMETER: /chatbot/litellm_api_key
         LOG_LEVEL: !Ref LogLevel
+        COGNITO_USER_POOL_ID: !Ref ChatbotUserPool
+        COGNITO_CLIENT_ID: !Ref ChatbotUserPoolClient
 
 Resources:
   # -------------------------------------------------------------
@@ -59,6 +61,8 @@ Resources:
     Properties:
       CodeUri: ./backend
       Handler: app.main.handler
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:27
       Policies:
         # Grants Read/Write access to the DynamoDB Table
         - DynamoDBCrudPolicy:
@@ -71,6 +75,23 @@ Resources:
             ParameterName: chatbot/litellm_api_key
         - SSMParameterReadPolicy:
             ParameterName: chatbot/litellm_vision_api_key
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
+          AWS_LWA_INVOKE_MODE: response_stream
+          PORT: "8080"
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins:
+            - "*"
+          AllowHeaders:
+            - Content-Type
+            - Authorization
+          AllowMethods:
+            - GET
+            - POST
       Events:
         # Secured proxy routes (inherits DefaultAuthorizer from ChatbotHttpApi)
         GetApiEvent:
@@ -106,6 +127,12 @@ Resources:
             ApiId: !Ref ChatbotHttpApi
             Auth:
               Authorizer: NONE
+
+  ChatbotBackendFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ChatbotBackendFunction}
+      RetentionInDays: 7
 
   # -------------------------------------------------------------
   # API Gateway HTTP API (API v2)
@@ -144,7 +171,10 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub chatbot-table-${Environment}
-      BillingMode: PAY_PER_REQUEST
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
       AttributeDefinitions:
         - AttributeName: pk
           AttributeType: S
@@ -166,6 +196,9 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -263,6 +296,9 @@ Outputs:
   ApiUrl:
     Description: "FastAPI base deployment URL"
     Value: !Sub "https://${ChatbotHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  FunctionUrl:
+    Description: "FastAPI Lambda Function URL for response streaming"
+    Value: !Ref ChatbotBackendFunctionUrl
   FrontendUrl:
     Description: "S3 Static Website Hosting URL for the Chatbot React Frontend"
     Value: !GetAtt ChatbotFrontendBucket.WebsiteURL

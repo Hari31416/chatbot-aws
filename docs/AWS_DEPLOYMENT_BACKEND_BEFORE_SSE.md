@@ -19,36 +19,43 @@
 
 A **serverless-ready chatbot API** that:
 - Accepts text messages and replies using an LLM (via LiteLLM).
-- Supports real-time Server-Sent Events (SSE) response streaming with instant token delivery.
 - Accepts image uploads with optional text prompts and replies with vision-capable models.
 - Persists conversation history in DynamoDB (with automatic TTL expiry).
 - Stores uploaded images privately in S3 and returns secure, temporary presigned URLs.
 - Reads secrets securely from AWS Systems Manager (SSM) Parameter Store.
-- Runs locally using `uvicorn`, and in production on **AWS Lambda Function URLs (FURL)** using the **AWS Lambda Web Adapter (LWA)** for chunked response streaming (with API Gateway + Mangum preserved for standard REST routes).
+- Runs locally using `uvicorn`, and in production on **AWS Lambda + API Gateway** using the **Mangum** ASGI adapter.
 
 ---
 
 ## 2. Architecture Overview
 
 ```
-Client (Vite React App)
+Client
   │
-  ├── GET/POST /conversations, /chat/image ──► API Gateway (Cognito Auth) ──► Lambda (FastAPI + Mangum)
-  │
-  └── POST /chat/stream (SSE stream) ───────► Lambda Function URL ─────────► LWA Layer ──► FastAPI Routes
-                                                (In-App PyJWT Auth)
+  ├── POST /chat              (JSON body: message, conversation_id, user_id)
+  └── POST /chat/image        (multipart: file + optional message/conversation_id/user_id)
+         │
+         ▼
+API Gateway (HTTP API v2)
+         │
+         ▼  ASGI event
+AWS Lambda (FastAPI + Mangum adapter)
+         │
+         ├── DynamoDB         → Store/retrieve conversation + context
+         ├── S3               → Store uploaded images
+         ├── SSM Param Store  → Decrypt LITELLM_API_KEY at cold start
+         └── LiteLLM          → Route completion to NVIDIA / OpenAI / etc.
 ```
 
 ### AWS Services Used (All Free-Tier Eligible)
 
 | Service | Purpose | Free Tier |
 |---|---|---|
-| **Lambda Function URL** | Free HTTPS endpoint with chunked streaming enabled | Free forever |
-| **AWS Lambda (arm64)** | Runs FastAPI serverlessly via AWS Lambda Web Adapter | 1M req + 400K GB-sec/month |
-| **API Gateway HTTP API** | HTTPS entrypoint, routes REST API requests | 1M req/month |
+| **API Gateway HTTP API** | HTTPS entrypoint, routes requests to Lambda | 1M req/month |
+| **AWS Lambda (arm64)** | Runs FastAPI serverlessly | 1M req + 400K GB-sec/month |
 | **DynamoDB (PAY_PER_REQUEST)** | Conversation & context storage with TTL | 25 GB storage |
 | **S3** | Private image attachment storage | 5 GB |
-| **SSM Parameter Store** | Encrypted API key storage | 10K params |
+| **SSM Parameter Store** | Encrypted API key storage | 10K standard params |
 
 ---
 
@@ -93,17 +100,15 @@ chatbot-aws/
 
 ## 4. How Each Component Works
 
-In standard REST request-response mode, AWS Lambda routes requests via API Gateway through **Mangum**:
+### `main.py` — Entry Point
 
 ```python
 from mangum import Mangum
 app = FastAPI(title="Chatbot API")
-handler = Mangum(app)   # API Gateway handler
+handler = Mangum(app)   # This is what Lambda calls
 ```
 
-However, for **SSE response streaming**, Mangum and API Gateway are bypassed. Instead, the **AWS Lambda Web Adapter (LWA)** layer runs in the Lambda runtime container, listens on `PORT: 8080`, and forwards requests directly to the FastAPI `app` object using a standard `uvicorn` web server.
-
-The SAM template specifies `Handler: app.main.handler` and configures the `AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap` environment variable. At cold start, the execution wrapper intercepts the invocation and executes `run.sh` inside the function directory, starting Uvicorn dynamically on port 8080.
+The `handler` variable is the Lambda function's entry point. AWS Lambda calls `handler(event, context)` for every HTTP request. Mangum translates the raw Lambda event into a standard ASGI/HTTP format that FastAPI understands.
 
 ---
 
@@ -458,22 +463,12 @@ sam deploy --guided   # Only needed first time, saves settings to samconfig.toml
 
 ### Subsequent Deployments
 
-#### Production environment (default stack "chat")
 ```bash
 cd backend
 uv export --format requirements-txt --no-hashes --no-emit-project -o requirements.txt
 cd ..
 sam build --use-container
 sam deploy
-```
-
-#### Staging environment (stack "chat-staging")
-```bash
-cd backend
-uv export --format requirements-txt --no-hashes --no-emit-project -o requirements.txt
-cd ..
-sam build --use-container
-sam deploy --config-env staging
 ```
 
 ### Verify Deployment

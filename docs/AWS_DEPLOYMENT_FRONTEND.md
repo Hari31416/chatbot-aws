@@ -12,7 +12,9 @@ Browser (User)
   ├── GET index.html / CSS / JS  ──► Amazon S3 Static Website Hosting
   │                                    (Bucket: chat-hari31416)
   │
-  └── POST /chat  ────────────────► AWS API Gateway (Secured by Cognito)
+  ├── GET/POST REST APIs ─────────► AWS API Gateway (Secured by Cognito)
+  │
+  └── POST /chat/stream (SSE) ────► AWS Lambda Function URL (In-App PyJWT)
 ```
 
 The frontend runs entirely client-side in the user's browser. It is compiled into static HTML, CSS, and JS chunks and hosted directly in an Amazon S3 bucket configured for website hosting.
@@ -48,27 +50,36 @@ We have automated the deployment pipeline using modular shell scripts and a root
 ### The Deployment Scripts
 
 1.  **[deploy-frontend.sh](file:///Users/hari/Desktop/sandbox/chatbot-aws/deploy-frontend.sh)**:
-    *   Queries CloudFormation stack outputs using the AWS CLI to retrieve the active `ApiUrl`, `FrontendBucket`, `UserPoolId`, and `UserPoolClientId`.
+    *   Queries CloudFormation stack outputs using the AWS CLI for the active stack (accepts an optional first command-line argument like `chat-staging` to specify the target environment, defaulting to `chat`).
+    *   Retrieves the active `ApiUrl`, `FrontendBucket`, `UserPoolId`, and `UserPoolClientId`.
     *   Falls back to your custom S3 bucket name `chat-hari31416` if stack outputs are not yet populated.
     *   Compiles Vite, injecting these variables dynamically at build-time.
-    *   Syncs the `/dist` directory to the S3 bucket using `aws s3 sync` and deletes stale files.
+    *   Syncs the `/dist` directory to the target S3 bucket using `aws s3 sync` and deletes stale files.
 
 ---
 
 ## 4. How to Deploy
 
-Using the root **`Makefile`**, you can deploy changes immediately:
+You can deploy the frontend to various target environments by running the orchestration scripts.
 
-### Step 1: Create and Configure the S3 Bucket (First-time only)
-Creates the public S3 bucket, unblocks public access, sets up static website hosting, and applies the read-only policy:
+### Deploying to Production (Default "chat" stack)
+Using the root **`Makefile`**, you can deploy changes to your production stack immediately:
 ```bash
+# 1. Create S3 Bucket configuration (First-time only)
 make create-bucket
+
+# 2. Compile and upload default production stack
+make deploy-frontend
+```
+Or directly call the shell script:
+```bash
+./deploy-frontend.sh
 ```
 
-### Step 2: Compile and Upload the React Frontend
-Bundles your code with active environment configurations and syncs it to S3 in under 5 seconds:
+### Deploying to Staging (Separate "chat-staging" stack)
+If you have deployed a separate staging stack (`chat-staging`) using Option C, compile and sync specifically to the staging S3 bucket:
 ```bash
-make deploy-frontend
+./deploy-frontend.sh chat-staging
 ```
 
 ---

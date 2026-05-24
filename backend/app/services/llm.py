@@ -44,3 +44,21 @@ class LlmClient:
             len(content),
         )
         return content
+
+    async def astream(self, messages: list[dict]):
+        logger.info(
+            "LLM stream request model=%s message_count=%d", self._model, len(messages)
+        )
+        try:
+            response = await acompletion(
+                model=self._model,
+                messages=messages,
+                api_key=self._api_key,
+                base_url=self._base_url,
+                stream=True,
+            )
+            async for chunk in response:
+                yield chunk
+        except Exception:
+            logger.exception("LLM stream call failed model=%s", self._model)
+            raise

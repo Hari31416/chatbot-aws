@@ -93,18 +93,32 @@ export function InputBar({
           <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto px-1">
             {ragDocuments.map((document) => {
               const selected = selectedDocuments.includes(document.source_doc)
+              const isProcessing = document.status === 'processing'
+              const isFailed = document.status === 'failed'
               return (
                 <button
                   key={document.document_id}
                   type="button"
+                  disabled={isProcessing || isFailed}
                   onClick={() => toggleDocument(document.source_doc)}
                   className={`rounded-md border px-2 py-1 text-xs transition ${
                     selected
                       ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200'
+                    : isProcessing
+                      ? 'border-amber-250 bg-amber-50/30 text-amber-600 dark:border-amber-900/50 dark:bg-amber-955 dark:text-amber-450 opacity-60 cursor-not-allowed'
+                      : isFailed
+                        ? 'border-red-250 bg-red-50/30 text-red-600 dark:border-red-900/50 dark:bg-amber-955 dark:text-red-450 opacity-60 cursor-not-allowed'
                       : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'
                   }`}
-                  title={`${document.chunks_ingested} chunks ingested`}
+                  title={
+                    isProcessing
+                      ? 'Document is currently being vectorized...'
+                      : isFailed
+                        ? 'Document ingestion failed.'
+                        : `${document.chunks_ingested} chunks ingested`
+                  }
                 >
+                  {isProcessing ? '⏳ ' : isFailed ? '⚠️ ' : ''}
                   {document.filename}
                 </button>
               )

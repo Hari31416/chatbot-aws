@@ -47,4 +47,5 @@ export interface RagDocument {
   chunks_ingested: number
   created_at: string
   updated_at: string
+  status?: string
 }

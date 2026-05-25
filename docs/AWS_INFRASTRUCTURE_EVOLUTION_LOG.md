@@ -172,14 +172,27 @@ The project evolved from a standard, single-tier request-response API to a highl
 
 ## 10. S3 Vectors RAG Baseline
 
-- **Commit:** pending
+- **Commit:** `4c8d50e` (Implement S3 Vectors RAG Baseline)
 - **What Changed:**
   - Added RAG configuration to backend settings for S3 Vectors bucket/index names, embedding model, embedding dimensions, chunk sizing, and default retrieval count.
   - Introduced `VectorStoreClient` for LiteLLM Gemini embeddings plus S3 Vectors `put_vectors` and `query_vectors` calls.
   - Stored `user_id` as filterable vector metadata and forced all vector similarity queries through a `user_id` filter before applying optional document filters.
-  - Introduced `RagService` for deterministic text normalization, chunking, embedding, and ingestion.
+  - Introduced `RagService` for text normalization, chunking, embedding, and ingestion.
   - Added `/rag/ingest` and `/rag/search` endpoints for plain-text knowledge ingestion and retrieval verification.
   - Added a DynamoDB-backed RAG document registry under each user partition and exposed it through `/rag/documents`.
   - Integrated optional RAG context injection into `/chat` and `/chat/stream` through `use_rag` and `rag_documents` request fields.
   - Added frontend RAG controls that show ingested document names and let users select document filters.
-  - Updated the SAM template with S3 Vectors IAM permissions and RAG environment variables. Textract remains intentionally out of scope for a future document-processing worker.
+  - Updated the SAM template with S3 Vectors IAM permissions and RAG environment variables.
+
+---
+
+## 11. Event-Driven Asynchronous Ingestion & SQS Background Worker
+
+- **Commit:** `9bc6f1d` (Implement Decoupled Event-Driven RAG Ingestion)
+- **What We Built:**
+  - **Asynchronous endpoints**: Redesigned `/rag/ingest` and `/rag/ingest/file` API routes to immediately save placeholders in DynamoDB with a `"processing"` status, upload raw files to S3 staging prefix `staging/{user_id}/{document_id}/{filename}`, and return a `202 Accepted` response.
+  - **SQS Integration**: Introduced `IngestionDLQ` and `IngestionQueue` coupled with an SQS Queue Policy that authorizes S3 event publications.
+  - **S3 Event Configuration**: Configured `NotificationConfiguration` on `ChatbotStorageBucket` under `staging/` key prefix to automatically trigger an SQS message when files land.
+  - **Background Worker**: Developed `ChatbotIngestionWorkerFunction` (`app/worker.py`) that polls SQS, decodes structured staging keys, processes files through Textract and RagService offline, updates DynamoDB status to `"ready"` (or `"failed"`), and cleans up staging files.
+  - **Visual Catalog & Polling**: Configured frontend `DocumentsModal.tsx` to automatically poll the API every 3 seconds if any document is processing, rendering beautiful pulsing, spinning orange badges saying `"Processing..."`, `"Failed"` warnings, and disabling quick-selectors until completed.
+  - **Unit Tests**: Updated mocks in `conftest.py` and restructured endpoints and added full worker handler unit tests in `test_rag.py`.

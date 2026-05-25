@@ -243,6 +243,7 @@ Resources:
   # -------------------------------------------------------------
   ChatbotStorageBucket:
     Type: AWS::S3::Bucket
+    DependsOn: IngestionQueuePolicy
     Properties:
       BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
       PublicAccessBlockConfiguration:
@@ -256,6 +257,15 @@ Resources:
           - Id: ExpireTemporaryUploads
             Status: Enabled
             ExpirationInDays: 7
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: staging/
+            Queue: !GetAtt IngestionQueue.Arn
 
   # -------------------------------------------------------------
   # Amazon S3 Bucket for Static Frontend Website Hosting (Public S3 Website)
@@ -352,6 +362,96 @@ Resources:
       MetadataConfiguration:
         NonFilterableMetadataKeys:
           - "text"
+
+  # -------------------------------------------------------------
+  # AWS SQS Queues for RAG Ingestion
+  # -------------------------------------------------------------
+  IngestionDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub chatbot-ingestion-dlq-${Environment}
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  IngestionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub chatbot-ingestion-queue-${Environment}
+      VisibilityTimeout: 180 # Must be >= Ingestion Worker Timeout (120s)
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
+        maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
+
+  IngestionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref IngestionQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowS3ToSendMessage
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt IngestionQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  # -------------------------------------------------------------
+  # Ingestion Worker Lambda Function
+  # -------------------------------------------------------------
+  ChatbotIngestionWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./backend
+      Handler: app.worker.handler
+      Timeout: 120
+      MemorySize: 512
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt IngestionQueue.QueueName
+        - S3CrudPolicy:
+            BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ChatbotTable
+        - SSMParameterReadPolicy:
+            ParameterName: chatbot/litellm_api_key
+        - SSMParameterReadPolicy:
+            ParameterName: chatbot/litellm_vision_api_key
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3vectors:PutVectors
+                - s3vectors:QueryVectors
+                - s3vectors:GetVectors
+                - s3vectors:ListIndexes
+              Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
+            - Effect: Allow
+              Action:
+                - s3vectors:ListVectorBuckets
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - textract:DetectDocumentText
+                - textract:StartDocumentTextDetection
+                - textract:GetDocumentTextDetection
+              Resource: "*"
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt IngestionQueue.Arn
+            BatchSize: 1 # Process one file at a time
+
+  ChatbotIngestionWorkerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ChatbotIngestionWorkerFunction}
+      RetentionInDays: 7
 
 Outputs:
   ApiUrl:

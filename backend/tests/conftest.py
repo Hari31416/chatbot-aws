@@ -142,6 +142,7 @@ class InMemoryConversationRepository:
         filename: str,
         chunks_ingested: int,
         created_at: str,
+        status: str = "ready",
     ) -> None:
         self._rag_documents.setdefault(user_id, []).append(
             {
@@ -149,10 +150,27 @@ class InMemoryConversationRepository:
                 "filename": filename,
                 "source_doc": filename,
                 "chunks_ingested": chunks_ingested,
+                "status": status,
                 "created_at": created_at,
                 "updated_at": created_at,
             }
         )
+
+    def update_rag_document_status(
+        self,
+        user_id: str,
+        document_id: str,
+        status: str,
+        chunks_ingested: int,
+        updated_at: str,
+    ) -> None:
+        docs = self._rag_documents.setdefault(user_id, [])
+        for doc in docs:
+            if doc["document_id"] == document_id:
+                doc["status"] = status
+                doc["chunks_ingested"] = chunks_ingested
+                doc["updated_at"] = updated_at
+                break
 
     def list_rag_documents(self, user_id: str) -> list[dict]:
         return list(reversed(self._rag_documents.get(user_id, [])))
@@ -161,8 +179,15 @@ class InMemoryConversationRepository:
 class InMemoryStorageService:
     def __init__(self) -> None:
         self.uploads: list[UploadResult] = []
+        self.raw_uploads: list[dict] = []
 
     def upload_image(self, key: str, data: bytes, mime_type: str) -> UploadResult:
+        result = UploadResult(s3_key=key, mime_type=mime_type, size_bytes=len(data))
+        self.uploads.append(result)
+        return result
+
+    def upload_bytes(self, key: str, data: bytes, mime_type: str) -> None:
+        self.raw_uploads.append({"key": key, "data": data, "mime_type": mime_type})
         result = UploadResult(s3_key=key, mime_type=mime_type, size_bytes=len(data))
         self.uploads.append(result)
         return result

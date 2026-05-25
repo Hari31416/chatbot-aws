@@ -57,6 +57,17 @@ export function DocumentsModal({
     }
   }, [isOpen])
 
+  // Auto-poll if any document is processing
+  React.useEffect(() => {
+    const hasProcessing = documents.some(doc => doc.status === 'processing')
+    if (hasProcessing && isOpen) {
+      const interval = setInterval(() => {
+        refetchDocuments()
+      }, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [documents, isOpen, refetchDocuments])
+
   if (!isOpen) return null
 
   // Filter documents
@@ -302,10 +313,21 @@ export function DocumentsModal({
                               </div>
                             </td>
                             <td className="px-6 py-4">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
-                                <Sparkles className="w-3 h-3" />
-                                {doc.chunks_ingested} chunks
-                              </span>
+                              {doc.status === 'processing' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 animate-pulse">
+                                  <Clock className="w-3 h-3 animate-spin shrink-0" />
+                                  Processing...
+                                </span>
+                              ) : doc.status === 'failed' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300">
+                                  ⚠️ Failed
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                                  <Sparkles className="w-3 h-3" />
+                                  {doc.chunks_ingested} chunks
+                                </span>
+                              )}
                             </td>
                             <td className="px-6 py-4 text-zinc-450 dark:text-zinc-400 flex items-center gap-1.5 mt-0.5">
                               <Calendar className="w-3.5 h-3.5" />

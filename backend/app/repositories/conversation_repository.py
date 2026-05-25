@@ -211,12 +211,14 @@ class ConversationRepository:
         filename: str,
         chunks_ingested: int,
         created_at: str,
+        status: str = "ready",
     ) -> None:
         logger.debug(
-            "put_rag_document user_id=%s document_id=%s filename=%s",
+            "put_rag_document user_id=%s document_id=%s filename=%s status=%s",
             user_id,
             document_id,
             filename,
+            status,
         )
         self._table.put_item(
             Item={
@@ -227,8 +229,51 @@ class ConversationRepository:
                 "filename": filename,
                 "source_doc": filename,
                 "chunks_ingested": chunks_ingested,
+                "status": status,
                 "created_at": created_at,
                 "updated_at": created_at,
+            }
+        )
+
+    def update_rag_document_status(
+        self,
+        user_id: str,
+        document_id: str,
+        status: str,
+        chunks_ingested: int,
+        updated_at: str,
+    ) -> None:
+        logger.debug(
+            "update_rag_document_status user_id=%s document_id=%s status=%s chunks=%d",
+            user_id,
+            document_id,
+            status,
+            chunks_ingested,
+        )
+        # Find the document first by querying all rag documents of this user
+        response = self._table.query(
+            KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
+            & Key("sk").begins_with("RAGDOC#")
+        )
+        items = response.get("Items", [])
+        target_item = None
+        for item in items:
+            if item.get("document_id") == document_id:
+                target_item = item
+                break
+        
+        if not target_item:
+            logger.warning("RAG document not found for update user_id=%s document_id=%s", user_id, document_id)
+            return
+            
+        self._table.update_item(
+            Key={"pk": target_item["pk"], "sk": target_item["sk"]},
+            UpdateExpression="SET #status = :status, chunks_ingested = :chunks_ingested, updated_at = :updated_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status": status,
+                ":chunks_ingested": chunks_ingested,
+                ":updated_at": updated_at,
             }
         )
 

@@ -153,6 +153,8 @@ def get_textract_client():
 def get_rag_service(
     vector_store: VectorStoreClient = Depends(get_vector_store),
 ) -> RagService:
+    if hasattr(vector_store, "dependency") or type(vector_store).__name__ == "Depends":
+        vector_store = get_vector_store()
     settings = get_settings()
     s3_client = get_s3_client()
     textract_client = get_textract_client()

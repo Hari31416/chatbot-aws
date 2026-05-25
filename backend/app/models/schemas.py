@@ -30,6 +30,7 @@ class RagDocumentResponse(BaseModel):
     chunks_ingested: int
     created_at: str
     updated_at: str
+    status: str = "ready"
 
 
 class RagSearchRequest(BaseModel):

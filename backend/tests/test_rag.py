@@ -24,14 +24,12 @@ def test_rag_ingest_endpoint(test_client: TestClient) -> None:
         },
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     payload = response.json()
-    assert payload == {
-        "status": "success",
-        "filename": "company_rules.txt",
-        "document_id": "doc-test",
-        "chunks_ingested": 1,
-    }
+    assert payload["status"] == "processing"
+    assert payload["filename"] == "company_rules.txt"
+    assert payload["document_id"]
+    assert payload["chunks_ingested"] == 0
 
 
 def test_rag_documents_endpoint_lists_ingested_items(test_client: TestClient) -> None:
@@ -42,17 +40,19 @@ def test_rag_documents_endpoint_lists_ingested_items(test_client: TestClient) ->
             "content": "The secure Wi-Fi password is AntigravityRAG2026.",
         },
     )
-    assert ingest_response.status_code == 201
+    assert ingest_response.status_code == 202
+    doc_id = ingest_response.json()["document_id"]
 
     response = test_client.get("/rag/documents")
 
     assert response.status_code == 200
     payload = response.json()
     assert len(payload) == 1
-    assert payload[0]["document_id"] == "doc-test"
+    assert payload[0]["document_id"] == doc_id
     assert payload[0]["filename"] == "company_rules.txt"
     assert payload[0]["source_doc"] == "company_rules.txt"
-    assert payload[0]["chunks_ingested"] == 1
+    assert payload[0]["chunks_ingested"] == 0
+    assert payload[0]["status"] == "processing"
     assert payload[0]["created_at"]
     assert payload[0]["updated_at"]
 
@@ -97,11 +97,11 @@ def test_rag_file_ingest_text_file(test_client: TestClient) -> None:
         "/rag/ingest/file",
         files={"file": ("test.txt", b"plain text content", "text/plain")}
     )
-    assert response.status_code == 201
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "processing"
     assert payload["filename"] == "test.txt"
-    assert payload["chunks_ingested"] == 1
+    assert payload["chunks_ingested"] == 0
 
 
 def test_rag_file_ingest_binary_file(test_client: TestClient) -> None:
@@ -109,11 +109,11 @@ def test_rag_file_ingest_binary_file(test_client: TestClient) -> None:
         "/rag/ingest/file",
         files={"file": ("test.pdf", b"%PDF-1.4 dummy", "application/pdf")}
     )
-    assert response.status_code == 201
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "processing"
     assert payload["filename"] == "test.pdf"
-    assert payload["chunks_ingested"] == 2
+    assert payload["chunks_ingested"] == 0
 
 
 def test_rag_file_ingest_too_large(test_client: TestClient) -> None:
@@ -123,15 +123,6 @@ def test_rag_file_ingest_too_large(test_client: TestClient) -> None:
         files={"file": ("big.pdf", large_data, "application/pdf")}
     )
     assert response.status_code == 413
-
-
-def test_rag_file_ingest_page_limit_exceeded(test_client: TestClient) -> None:
-    response = test_client.post(
-        "/rag/ingest/file",
-        files={"file": ("limit_exceeded.pdf", b"dummy pdf", "application/pdf")}
-    )
-    assert response.status_code == 400
-    assert "exceeds maximum page limit of 100 pages" in response.json()["detail"]
 
 
 class MockVectorStore:
@@ -262,4 +253,112 @@ async def test_rag_service_ingest_binary_document_limit_exceeded() -> None:
     assert "exceeds maximum page limit of 100 pages" in str(excinfo.value)
     # Cleanup should still have run even on failure
     assert len(s3_client.deleted) == 1
+
+
+def test_worker_handler_success() -> None:
+    import json
+    from unittest.mock import patch, MagicMock, AsyncMock, ANY
+    from app.services.rag import RagIngestResult
+
+    mock_repo = MagicMock()
+    mock_s3 = MagicMock()
+    mock_rag = MagicMock()
+    
+    mock_body = MagicMock()
+    mock_body.read.return_value = b"some document text content"
+    mock_s3.get_object.return_value = {"Body": mock_body, "ContentType": "text/plain"}
+    
+    mock_rag.ingest_document = AsyncMock(return_value=RagIngestResult(document_id="doc-123", chunks_ingested=5))
+    mock_rag.ingest_binary_document = AsyncMock()
+    
+    event = {
+        "Records": [
+            {
+                "body": json.dumps({
+                    "Records": [
+                        {
+                            "s3": {
+                                "bucket": {"name": "test-bucket"},
+                                "object": {"key": "staging/user-456/doc-123/my-file.txt"}
+                            }
+                        }
+                    ]
+                })
+            }
+        ]
+    }
+    
+    with patch("app.worker.get_repository", return_value=mock_repo), \
+         patch("app.worker.get_s3_client", return_value=mock_s3), \
+         patch("app.worker.get_rag_service", return_value=mock_rag):
+         
+         from app.worker import handler
+         handler(event, None)
+         
+    mock_s3.get_object.assert_called_with(Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt")
+    
+    mock_rag.ingest_document.assert_called_with(
+        filename="my-file.txt",
+        content="some document text content",
+        user_id="user-456",
+        document_id="doc-123"
+    )
+    
+    mock_repo.update_rag_document_status.assert_called_with(
+        "user-456",
+        "doc-123",
+        "ready",
+        5,
+        ANY
+    )
+    
+    mock_s3.delete_object.assert_called_with(Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt")
+
+
+def test_worker_handler_failure_updates_status() -> None:
+    import json
+    from unittest.mock import patch, MagicMock, AsyncMock, ANY
+
+    mock_repo = MagicMock()
+    mock_s3 = MagicMock()
+    mock_rag = MagicMock()
+    
+    # Simulate an error during S3 download
+    mock_s3.get_object.side_effect = Exception("S3 Connection Lost")
+    
+    event = {
+        "Records": [
+            {
+                "body": json.dumps({
+                    "Records": [
+                        {
+                            "s3": {
+                                "bucket": {"name": "test-bucket"},
+                                "object": {"key": "staging/user-456/doc-123/my-file.txt"}
+                            }
+                        }
+                    ]
+                })
+            }
+        ]
+    }
+    
+    with patch("app.worker.get_repository", return_value=mock_repo), \
+         patch("app.worker.get_s3_client", return_value=mock_s3), \
+         patch("app.worker.get_rag_service", return_value=mock_rag):
+         
+         from app.worker import handler
+         handler(event, None)
+         
+    # Repository should be notified of failure
+    mock_repo.update_rag_document_status.assert_called_with(
+        "user-456",
+        "doc-123",
+        "failed",
+        0,
+        ANY
+    )
+    
+    # staging file should still be cleaned up in finally block
+    mock_s3.delete_object.assert_called_with(Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt")
 

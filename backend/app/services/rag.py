@@ -40,10 +40,11 @@ class RagService:
 
 
     async def ingest_document(
-        self, filename: str, content: str, user_id: str
+        self, filename: str, content: str, user_id: str, document_id: str | None = None
     ) -> RagIngestResult:
         chunks = self.split_text(content)
-        document_id = str(uuid4())
+        if not document_id:
+            document_id = str(uuid4())
         if not chunks:
             return RagIngestResult(document_id=document_id, chunks_ingested=0)
 
@@ -63,7 +64,7 @@ class RagService:
         )
 
     async def ingest_binary_document(
-        self, filename: str, data: bytes, mime_type: str, user_id: str
+        self, filename: str, data: bytes, mime_type: str, user_id: str, document_id: str | None = None
     ) -> RagIngestResult:
         import os
         import asyncio
@@ -73,7 +74,8 @@ class RagService:
         if not self.s3_client or not self.s3_bucket_name or not self.textract_client:
             raise ValueError("S3 and Textract clients must be configured to process binary documents")
 
-        document_id = str(uuid4())
+        if not document_id:
+            document_id = str(uuid4())
         extension = os.path.splitext(filename.lower())[1] or ""
         s3_key = f"rag-raw-uploads/{user_id}/{document_id}{extension}"
 

@@ -507,57 +507,55 @@ async def chat_image(
 @router.post(
     "/rag/ingest",
     response_model=RagIngestResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def ingest_rag_text(
     payload: RagIngestRequest,
     repo=Depends(get_repository),
-    rag_service=Depends(get_rag_service),
+    storage=Depends(get_storage),
     user_id: str = Depends(get_current_user_id),
 ) -> RagIngestResponse:
     logger.info("RAG ingest request filename=%s user_id=%s", payload.filename, user_id)
-    try:
-        result = await rag_service.ingest_document(
-            payload.filename, payload.content, user_id
-        )
-    except Exception as exc:
-        logger.exception("RAG ingestion failed filename=%s", payload.filename)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ingestion failed: {exc}",
-        ) from exc
-
+    document_id = str(uuid4())
     created_at = utcnow_iso()
+
     await to_thread.run_sync(
         repo.put_rag_document,
         user_id,
-        result.document_id,
+        document_id,
         payload.filename,
-        result.chunks_ingested,
+        0,
         created_at,
+        "processing",
+    )
+
+    s3_key = f"staging/{user_id}/{document_id}/{payload.filename}"
+    await to_thread.run_sync(
+        storage.upload_bytes,
+        s3_key,
+        payload.content.encode("utf-8"),
+        "text/plain"
     )
 
     return RagIngestResponse(
-        status="success",
+        status="processing",
         filename=payload.filename,
-        document_id=result.document_id,
-        chunks_ingested=result.chunks_ingested,
+        document_id=document_id,
+        chunks_ingested=0,
     )
 
 
 @router.post(
     "/rag/ingest/file",
     response_model=RagIngestResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def ingest_rag_file(
     file: UploadFile = File(...),
     repo=Depends(get_repository),
-    rag_service=Depends(get_rag_service),
+    storage=Depends(get_storage),
     user_id: str = Depends(get_current_user_id),
 ) -> RagIngestResponse:
-    import os
-
     filename = file.filename or "uploaded_document"
     logger.info("RAG file ingest request filename=%s user_id=%s", filename, user_id)
 
@@ -576,59 +574,35 @@ async def ingest_rag_file(
             detail=f"File exceeds maximum size of 20MB (got {size_bytes / (1024 * 1024):.1f}MB)",
         )
 
-    # 2. Determine if it is a plain text file or needs Textract
-    extension = os.path.splitext(filename.lower())[1] or ""
-    is_binary = extension in (".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif")
-
-    try:
-        if is_binary:
-            result = await rag_service.ingest_binary_document(
-                filename, data, file.content_type or "application/octet-stream", user_id
-            )
-        else:
-            try:
-                content = data.decode("utf-8")
-            except UnicodeDecodeError:
-                logger.warning(
-                    "Failed to decode file as UTF-8; falling back to Textract filename=%s",
-                    filename,
-                )
-                # Fallback to Textract if decoding fails
-                result = await rag_service.ingest_binary_document(
-                    filename, data, file.content_type or "application/octet-stream", user_id
-                )
-            else:
-                result = await rag_service.ingest_document(filename, content, user_id)
-    except ValueError as val_err:
-        logger.warning("RAG Ingestion validation error: %s", val_err)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(val_err),
-        )
-    except Exception as exc:
-        logger.exception("RAG Ingestion failed filename=%s", filename)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ingestion failed: {exc}",
-        ) from exc
-
+    document_id = str(uuid4())
     created_at = utcnow_iso()
+
+    # 2. Save placeholder in DynamoDB
     await to_thread.run_sync(
         repo.put_rag_document,
         user_id,
-        result.document_id,
+        document_id,
         filename,
-        result.chunks_ingested,
+        0,
         created_at,
+        "processing",
+    )
+
+    # 3. Upload raw file to S3 under staging prefix
+    s3_key = f"staging/{user_id}/{document_id}/{filename}"
+    await to_thread.run_sync(
+        storage.upload_bytes,
+        s3_key,
+        data,
+        file.content_type or "application/octet-stream"
     )
 
     return RagIngestResponse(
-        status="success",
+        status="processing",
         filename=filename,
-        document_id=result.document_id,
-        chunks_ingested=result.chunks_ingested,
+        document_id=document_id,
+        chunks_ingested=0,
     )
-
 
 
 @router.get("/rag/documents", response_model=list[RagDocumentResponse])
@@ -645,6 +619,7 @@ async def list_rag_documents(
             chunks_ingested=item.get("chunks_ingested", 0),
             created_at=item.get("created_at"),
             updated_at=item.get("updated_at", item.get("created_at")),
+            status=item.get("status", "ready"),
         )
         for item in items
     ]

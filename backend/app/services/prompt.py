@@ -13,7 +13,9 @@ def build_history_messages(history: Iterable[dict]) -> list[dict]:
     return messages
 
 
-def build_user_content(text: str | None, image_data_url: str | None) -> str | list[dict]:
+def build_user_content(
+    text: str | None, image_data_url: str | None
+) -> str | list[dict]:
     if image_data_url:
         parts: list[dict] = []
         if text:

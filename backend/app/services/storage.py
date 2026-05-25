@@ -26,7 +26,9 @@ class StorageService:
         logger.info("StorageService initialised bucket=%s", bucket_name)
 
     def upload_image(self, key: str, data: bytes, mime_type: str) -> UploadResult:
-        logger.debug("Uploading image key=%s mime_type=%s size=%d", key, mime_type, len(data))
+        logger.debug(
+            "Uploading image key=%s mime_type=%s size=%d", key, mime_type, len(data)
+        )
         self._s3.put_object(
             Bucket=self._bucket,
             Key=key,

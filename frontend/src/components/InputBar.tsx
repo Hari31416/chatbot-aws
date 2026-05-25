@@ -1,4 +1,5 @@
 import * as React from 'react'
+import type { RagDocument } from '../types'
 
 interface InputBarProps {
   inputText: string
@@ -10,6 +11,11 @@ interface InputBarProps {
   handleRemoveImage: () => void
   fileInputRef: React.RefObject<HTMLInputElement | null>
   isPending: boolean
+  useRag: boolean
+  setUseRag: (enabled: boolean) => void
+  ragDocumentsText: string
+  setRagDocumentsText: (text: string) => void
+  ragDocuments: RagDocument[]
 }
 
 export function InputBar({
@@ -22,7 +28,24 @@ export function InputBar({
   handleRemoveImage,
   fileInputRef,
   isPending,
+  useRag,
+  setUseRag,
+  ragDocumentsText,
+  setRagDocumentsText,
+  ragDocuments,
 }: InputBarProps) {
+  const selectedDocuments = ragDocumentsText
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  const toggleDocument = (filename: string) => {
+    const next = selectedDocuments.includes(filename)
+      ? selectedDocuments.filter((item) => item !== filename)
+      : [...selectedDocuments, filename]
+    setRagDocumentsText(next.join(', '))
+  }
+
   return (
     <div className="border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 z-25">
       <form onSubmit={handleSendMessage} className="max-w-3xl mx-auto flex flex-col gap-2">
@@ -42,6 +65,50 @@ export function InputBar({
             <span className="text-xs truncate font-mono text-zinc-500">
               {selectedImage?.name}
             </span>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-955 sm:flex-row sm:items-center">
+          <label className="flex items-center gap-2 text-xs font-medium text-zinc-650 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={useRag}
+              onChange={(e) => setUseRag(e.target.checked)}
+              disabled={Boolean(selectedImage)}
+              className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
+            />
+            RAG
+          </label>
+          <input
+            type="text"
+            value={ragDocumentsText}
+            onChange={(e) => setRagDocumentsText(e.target.value)}
+            disabled={!useRag || Boolean(selectedImage)}
+            placeholder="Optional documents: company_rules.txt, handbook.txt"
+            className="min-w-0 flex-1 bg-transparent text-xs text-zinc-700 outline-hidden placeholder:text-zinc-400 disabled:opacity-45 dark:text-zinc-200"
+          />
+        </div>
+
+        {useRag && ragDocuments.length > 0 && !selectedImage && (
+          <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto px-1">
+            {ragDocuments.map((document) => {
+              const selected = selectedDocuments.includes(document.source_doc)
+              return (
+                <button
+                  key={document.document_id}
+                  type="button"
+                  onClick={() => toggleDocument(document.source_doc)}
+                  className={`rounded-md border px-2 py-1 text-xs transition ${
+                    selected
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200'
+                      : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'
+                  }`}
+                  title={`${document.chunks_ingested} chunks ingested`}
+                >
+                  {document.filename}
+                </button>
+              )
+            })}
           </div>
         )}
 

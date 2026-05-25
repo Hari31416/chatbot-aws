@@ -36,6 +36,9 @@ The project evolved from a standard, single-tier request-response API to a highl
                 │
                 ▼ (FastAPI CORSMiddleware alignment; run.sh virtualenv PATH fixes)
        Frontend Modular Decomposition (ec2764d)
+                │
+                ▼ (S3 Vectors retrieval endpoints and chat-time RAG prompt injection)
+       S3 Vectors RAG Baseline
 ```
 
 ---
@@ -154,3 +157,18 @@ The project evolved from a standard, single-tier request-response API to a highl
     4. **`InputBar.tsx`**: Handles prompt entries, image attachment previews, and S3 file validation rules.
     5. **`SettingsModal.tsx`**: Houses API base URL configs and public API heartbeat checkers.
   - Reduced the central `App.tsx` file to a lightweight wrapper managing only global state, custom React hooks, and stream reader triggers, improving code maintainability.
+
+---
+
+## 10. S3 Vectors RAG Baseline
+* **Commit:** pending
+* **What Changed:**
+  - Added RAG configuration to backend settings for S3 Vectors bucket/index names, embedding model, embedding dimensions, chunk sizing, and default retrieval count.
+  - Introduced `VectorStoreClient` for LiteLLM Gemini embeddings plus S3 Vectors `put_vectors` and `query_vectors` calls.
+  - Stored `user_id` as filterable vector metadata and forced all vector similarity queries through a `user_id` filter before applying optional document filters.
+  - Introduced `RagService` for deterministic text normalization, chunking, embedding, and ingestion.
+  - Added `/rag/ingest` and `/rag/search` endpoints for plain-text knowledge ingestion and retrieval verification.
+  - Added a DynamoDB-backed RAG document registry under each user partition and exposed it through `/rag/documents`.
+  - Integrated optional RAG context injection into `/chat` and `/chat/stream` through `use_rag` and `rag_documents` request fields.
+  - Added frontend RAG controls that show ingested document names and let users select document filters.
+  - Updated the SAM template with S3 Vectors IAM permissions and RAG environment variables. Textract remains intentionally out of scope for a future document-processing worker.

@@ -26,6 +26,8 @@ export interface ChatRequest {
   message: string
   conversation_id?: string | null
   user_id?: string | null
+  use_rag?: boolean
+  rag_documents?: string[] | null
 }
 
 export interface ChatResponse {
@@ -36,4 +38,13 @@ export interface ChatResponse {
   created_at?: string | null
   error?: string | null
   attachment?: Attachment | null
+}
+
+export interface RagDocument {
+  document_id: string
+  filename: string
+  source_doc: string
+  chunks_ingested: number
+  created_at: string
+  updated_at: string
 }

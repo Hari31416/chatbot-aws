@@ -67,6 +67,29 @@ class Settings(BaseSettings):
         default=None, validation_alias="LITELLM_VISION_BASE_URL"
     )
 
+    s3_vector_bucket_name: str = Field(
+        default="chatbot-vectors-prod", validation_alias="S3_VECTOR_BUCKET_NAME"
+    )
+    s3_vector_index_name: str = Field(
+        default="enterprise-kb", validation_alias="S3_VECTOR_INDEX_NAME"
+    )
+    s3_vector_endpoint_url: str | None = Field(
+        default=None, validation_alias="S3_VECTOR_ENDPOINT_URL"
+    )
+    litellm_embedding_model: str = Field(
+        default="gemini/gemini-embedding-2",
+        validation_alias="LITELLM_EMBEDDING_MODEL",
+    )
+    litellm_embedding_api_key: str | None = Field(
+        default=None, validation_alias="LITELLM_EMBEDDING_API_KEY"
+    )
+    embedding_dimension: int = Field(
+        default=768, validation_alias="EMBEDDING_DIMENSION"
+    )
+    rag_top_k: int = Field(default=3, validation_alias="RAG_TOP_K")
+    rag_chunk_size: int = Field(default=800, validation_alias="RAG_CHUNK_SIZE")
+    rag_chunk_overlap: int = Field(default=80, validation_alias="RAG_CHUNK_OVERLAP")
+
     @field_validator("allowed_image_mime_types", mode="before")
     @classmethod
     def _parse_mime_types(cls, value: object) -> list[str] | object:

@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { Message, Conversation } from './types'
-import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, deleteConversationApi, sendChatMessageStream } from './services/api'
+import { sendTextMessage, sendImageMessage, checkHealth, fetchConversations, fetchConversationMessages, deleteConversationApi, sendChatMessageStream, fetchRagDocuments } from './services/api'
 import { useToast } from '@/components/ui/Toast'
 import { useTheme } from '@/components/theme-provider'
 import {
@@ -67,6 +67,8 @@ export function App() {
   const [isStreaming, setIsStreaming] = React.useState(false)
   const [selectedImage, setSelectedImage] = React.useState<File | null>(null)
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(null)
+  const [useRag, setUseRag] = React.useState(false)
+  const [ragDocumentsText, setRagDocumentsText] = React.useState('')
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
 
@@ -74,6 +76,13 @@ export function App() {
   const { data: isBackendOnline, refetch: recheckBackendHealth, isFetching: isCheckingHealth } = useQuery({
     queryKey: ['backendHealth', apiBaseUrl],
     queryFn: () => checkHealth(apiBaseUrl),
+    refetchInterval: 30000,
+  })
+
+  const { data: ragDocuments = [] } = useQuery({
+    queryKey: ['ragDocuments', apiBaseUrl, isLoggedIn],
+    queryFn: () => fetchRagDocuments(apiBaseUrl),
+    enabled: Boolean(apiBaseUrl && isLoggedIn),
     refetchInterval: 30000,
   })
 
@@ -455,6 +464,11 @@ export function App() {
       }
     })
 
+    const ragDocuments = ragDocumentsText
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+
     if (selectedImage) {
       sendMutation.mutate({
         text: inputText.trim(),
@@ -554,6 +568,10 @@ export function App() {
           })
 
           setIsStreaming(false)
+        },
+        {
+          use_rag: useRag,
+          rag_documents: ragDocuments.length > 0 ? ragDocuments : null
         }
       )
     }
@@ -647,6 +665,11 @@ export function App() {
           handleRemoveImage={handleRemoveImage}
           fileInputRef={fileInputRef}
           isPending={sendMutation.isPending || isStreaming}
+          useRag={useRag}
+          setUseRag={setUseRag}
+          ragDocumentsText={ragDocumentsText}
+          setRagDocumentsText={setRagDocumentsText}
+          ragDocuments={ragDocuments}
         />
       </main>
 

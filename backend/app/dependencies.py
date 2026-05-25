@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.request
 from functools import lru_cache
+from typing import Any, cast
 
 import boto3
 from botocore.config import Config
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 
 from .repositories.conversation_repository import ConversationRepository
 from .services.llm import LlmClient
+from .services.rag import RagService
 from .services.storage import StorageService
+from .services.vector_store import VectorStoreClient
 from .settings import Settings
 
 
@@ -54,9 +58,6 @@ def get_storage() -> StorageService:
     settings = get_settings()
     client = get_s3_client()
     return StorageService(client, settings.s3_bucket_name)
-
-
-import os
 
 
 @lru_cache
@@ -112,7 +113,43 @@ def get_vision_llm_client() -> LlmClient:
     )
 
 
-from fastapi import Request
+@lru_cache
+def get_vector_store() -> VectorStoreClient:
+    settings = get_settings()
+    api_key = settings.litellm_embedding_api_key or settings.litellm_vision_api_key
+
+    ssm_param_name = os.getenv("LITELLM_EMBEDDING_API_KEY_PARAMETER")
+    if not ssm_param_name:
+        ssm_param_name = os.getenv("LITELLM_VISION_API_KEY_PARAMETER")
+    if ssm_param_name:
+        ssm_key = get_ssm_parameter(ssm_param_name)
+        if ssm_key:
+            api_key = ssm_key
+
+    if not api_key:
+        api_key = os.getenv("GEMINI_API_KEY")
+
+    return VectorStoreClient(
+        region_name=settings.aws_region,
+        vector_bucket=settings.s3_vector_bucket_name,
+        index_name=settings.s3_vector_index_name,
+        embedding_model=settings.litellm_embedding_model,
+        dimension=settings.embedding_dimension,
+        gemini_api_key=api_key,
+        endpoint_url=settings.s3_vector_endpoint_url,
+    )
+
+
+def get_rag_service(
+    vector_store: VectorStoreClient = Depends(get_vector_store),
+) -> RagService:
+    settings = get_settings()
+    return RagService(
+        vector_store=vector_store,
+        chunk_size=settings.rag_chunk_size,
+        chunk_overlap=settings.rag_chunk_overlap,
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +164,9 @@ def get_jwks(jwks_url: str) -> dict:
         return {"keys": []}
 
 
-def get_current_user_id(request: Request, settings: Settings = Depends(get_settings)) -> str:
+def get_current_user_id(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> str:
     # 1. AWS Lambda Environment: Extract Cognito claims from API Gateway (if present)
     aws_event = request.scope.get("aws.event")
     if aws_event and isinstance(aws_event, dict):
@@ -150,7 +189,7 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
             if settings.cognito_user_pool_id:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token format"
+                    detail="Invalid token format",
                 )
             return token
 
@@ -167,44 +206,52 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
                 jwks_url = f"https://cognito-idp.{settings.aws_region}.amazonaws.com/{settings.cognito_user_pool_id}/.well-known/jwks.json"
                 jwks = get_jwks(jwks_url)
 
-                public_key = None
+                public_key: Any = None
                 for key in jwks.get("keys", []):
                     if key.get("kid") == kid:
                         from jwt.algorithms import RSAAlgorithm
+
                         public_key = RSAAlgorithm.from_jwk(key)
                         break
 
                 if public_key:
                     payload = jwt.decode(
                         token,
-                        public_key,
+                        cast(Any, public_key),
                         algorithms=["RS256"],
                         audience=settings.cognito_client_id,
                         options={"verify_exp": True},
                     )
-                    return payload.get("sub") or payload.get("email") or payload.get("cognito:username")
-                
+                    return _first_string_claim(
+                        payload, ("sub", "email", "cognito:username")
+                    )
+
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token key ID not found in Cognito JWKS"
+                    detail="Token key ID not found in Cognito JWKS",
                 )
 
             # Fallback 1: Decode without signature verification (useful for local dev)
-            logger.warning("JWKS validation skipped or key not found. Performing unverified decode for fallback.")
+            logger.warning(
+                "JWKS validation skipped or key not found. Performing unverified decode for fallback."
+            )
             payload = jwt.decode(token, options={"verify_signature": False})
-            return payload.get("sub") or payload.get("email") or payload.get("cognito:username") or "admin"
+            return _first_string_claim(
+                payload, ("sub", "email", "cognito:username"), default="admin"
+            )
 
         except Exception as e:
             logger.warning("JWT validation failed: %s", e)
             if settings.cognito_user_pool_id:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Signature verification failed: {str(e)}"
+                    detail=f"Signature verification failed: {str(e)}",
                 )
             try:
                 import jwt
+
                 payload = jwt.decode(token, options={"verify_signature": False})
-                return payload.get("sub") or payload.get("email") or "admin"
+                return _first_string_claim(payload, ("sub", "email"), default="admin")
             except Exception:
                 return "admin"
 
@@ -217,9 +264,19 @@ def get_current_user_id(request: Request, settings: Settings = Depends(get_setti
     if settings.cognito_user_pool_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header is required"
+            detail="Authorization header is required",
         )
 
     return "admin"
 
 
+def _first_string_claim(
+    payload: dict[str, Any], keys: tuple[str, ...], default: str | None = None
+) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    if default is not None:
+        return default
+    return cast(str, "")

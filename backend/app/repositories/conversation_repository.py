@@ -16,15 +16,30 @@ def message_sk(created_at: str, message_id: str) -> str:
     return f"MSG#{created_at}#{message_id}"
 
 
+def pk_for_user(user_id: str) -> str:
+    return f"USER#{user_id}"
+
+
+def rag_document_sk(created_at: str, document_id: str) -> str:
+    return f"RAGDOC#{created_at}#{document_id}"
+
+
 class ConversationRepository:
     def __init__(self, table):
         self._table = table
 
     def create_conversation(
-        self, conversation_id: str, created_at: str, user_id: str | None, name: str = "New Chat..."
+        self,
+        conversation_id: str,
+        created_at: str,
+        user_id: str | None,
+        name: str = "New Chat...",
     ) -> None:
         logger.debug(
-            "create_conversation conversation_id=%s user_id=%s name=%s", conversation_id, user_id, name
+            "create_conversation conversation_id=%s user_id=%s name=%s",
+            conversation_id,
+            user_id,
+            name,
         )
         item = {
             "pk": pk_for_conversation(conversation_id),
@@ -45,7 +60,8 @@ class ConversationRepository:
         except ClientError as exc:
             if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
                 logger.exception(
-                    "DynamoDB error creating conversation conversation_id=%s", conversation_id
+                    "DynamoDB error creating conversation conversation_id=%s",
+                    conversation_id,
                 )
                 raise
             logger.debug(
@@ -64,7 +80,10 @@ class ConversationRepository:
         user_id: str | None = None,
     ) -> None:
         logger.debug(
-            "put_message conversation_id=%s message_id=%s role=%s", conversation_id, message_id, role
+            "put_message conversation_id=%s message_id=%s role=%s",
+            conversation_id,
+            message_id,
+            role,
         )
         item = {
             "pk": pk_for_conversation(conversation_id),
@@ -140,7 +159,9 @@ class ConversationRepository:
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("sk").eq("META"),
         )
         items = response.get("Items", [])
-        items.sort(key=lambda x: x.get("updated_at", x.get("created_at", "")), reverse=True)
+        items.sort(
+            key=lambda x: x.get("updated_at", x.get("created_at", "")), reverse=True
+        )
         return items
 
     def get_conversation_meta(self, conversation_id: str) -> dict | None:
@@ -150,8 +171,12 @@ class ConversationRepository:
         )
         return response.get("Item")
 
-    def update_conversation(self, conversation_id: str, name: str, updated_at: str) -> None:
-        logger.debug("update_conversation conversation_id=%s name=%s", conversation_id, name)
+    def update_conversation(
+        self, conversation_id: str, name: str, updated_at: str
+    ) -> None:
+        logger.debug(
+            "update_conversation conversation_id=%s name=%s", conversation_id, name
+        )
         self._table.update_item(
             Key={"pk": pk_for_conversation(conversation_id), "sk": "META"},
             UpdateExpression="SET #name = :name, updated_at = :updated_at",
@@ -171,14 +196,47 @@ class ConversationRepository:
     def delete_conversation(self, conversation_id: str) -> None:
         logger.debug("delete_conversation conversation_id=%s", conversation_id)
         pk = pk_for_conversation(conversation_id)
-        response = self._table.query(
-            KeyConditionExpression=Key("pk").eq(pk)
-        )
+        response = self._table.query(KeyConditionExpression=Key("pk").eq(pk))
         items = response.get("Items", [])
         if not items:
             return
         with self._table.batch_writer() as batch:
             for item in items:
-                batch.delete_item(
-                    Key={"pk": item["pk"], "sk": item["sk"]}
-                )
+                batch.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
+
+    def put_rag_document(
+        self,
+        user_id: str,
+        document_id: str,
+        filename: str,
+        chunks_ingested: int,
+        created_at: str,
+    ) -> None:
+        logger.debug(
+            "put_rag_document user_id=%s document_id=%s filename=%s",
+            user_id,
+            document_id,
+            filename,
+        )
+        self._table.put_item(
+            Item={
+                "pk": pk_for_user(user_id),
+                "sk": rag_document_sk(created_at, document_id),
+                "user_id": user_id,
+                "document_id": document_id,
+                "filename": filename,
+                "source_doc": filename,
+                "chunks_ingested": chunks_ingested,
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        )
+
+    def list_rag_documents(self, user_id: str) -> list[dict]:
+        logger.debug("list_rag_documents user_id=%s", user_id)
+        response = self._table.query(
+            KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
+            & Key("sk").begins_with("RAGDOC#"),
+            ScanIndexForward=False,
+        )
+        return response.get("Items", [])

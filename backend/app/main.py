@@ -1,4 +1,5 @@
 import logging
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Chatbot API")
 
 app.add_middleware(
-    CORSMiddleware,
+    cast(Any, CORSMiddleware),
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -33,4 +34,3 @@ def health() -> dict[str, str]:
 logger.info("Chatbot API initialised")
 
 handler = Mangum(app)
-

@@ -8,16 +8,16 @@ logger = logging.getLogger(__name__)
 
 
 class LlmClient:
-    def __init__(self, model: str, api_key: str | None = None, base_url: str | None = None):
+    def __init__(
+        self, model: str, api_key: str | None = None, base_url: str | None = None
+    ):
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
         logger.info("LlmClient initialised model=%s base_url=%s", model, base_url)
 
     async def generate(self, messages: list[dict]) -> str:
-        logger.info(
-            "LLM request model=%s message_count=%d", self._model, len(messages)
-        )
+        logger.info("LLM request model=%s message_count=%d", self._model, len(messages))
         try:
             response = await acompletion(
                 model=self._model,

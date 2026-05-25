@@ -1,4 +1,4 @@
-import type { ChatRequest, ChatResponse, Conversation, Message } from "../types"
+import type { ChatRequest, ChatResponse, Conversation, Message, RagDocument } from "../types"
 import { getCurrentSessionToken } from "./auth"
 
 /**
@@ -242,6 +242,30 @@ export async function deleteConversationApi(
 }
 
 /**
+ * Fetches the user's ingested RAG document catalogue.
+ */
+export async function fetchRagDocuments(apiBaseUrl: string): Promise<RagDocument[]> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "")
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/rag/documents`, {
+    method: "GET",
+    headers,
+  })
+
+  return handleResponse<RagDocument[]>(
+    response,
+    "Failed to fetch RAG documents"
+  )
+}
+
+/**
  * Progressive chunk structure for Response Streaming
  */
 export interface StreamChunk {
@@ -262,7 +286,8 @@ export async function sendChatMessageStream(
   conversationId?: string | null,
   onChunk?: (text: string) => void,
   onComplete?: (finalConversationId: string, assistantMsgId: string, userMsgId: string) => void,
-  onError?: (error: string) => void
+  onError?: (error: string) => void,
+  ragOptions?: Pick<ChatRequest, "use_rag" | "rag_documents">
 ): Promise<void> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "")
   try {
@@ -280,6 +305,8 @@ export async function sendChatMessageStream(
       body: JSON.stringify({
         message,
         conversation_id: conversationId,
+        use_rag: ragOptions?.use_rag ?? false,
+        rag_documents: ragOptions?.rag_documents ?? null,
       }),
     })
 

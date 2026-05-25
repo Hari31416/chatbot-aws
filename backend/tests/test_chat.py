@@ -1,3 +1,4 @@
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -32,8 +33,10 @@ def test_chat_error_handling(test_client: TestClient) -> None:
         async def generate(self, messages: list[dict]) -> str:
             raise RuntimeError("API failure")
 
-    test_client.app.dependency_overrides[get_llm_client] = lambda: ErrorLlmClient()
-    test_client.app.dependency_overrides[get_vision_llm_client] = lambda: ErrorLlmClient()
+    app = test_client.app
+    assert isinstance(app, FastAPI)
+    app.dependency_overrides[get_llm_client] = lambda: ErrorLlmClient()
+    app.dependency_overrides[get_vision_llm_client] = lambda: ErrorLlmClient()
 
     response = test_client.post("/chat", json={"message": "Hello"})
     assert response.status_code == 200
@@ -55,6 +58,7 @@ def test_chat_stream(test_client: TestClient) -> None:
     assert len(non_empty_lines) == 4
 
     import json
+
     # Parse first chunk
     assert non_empty_lines[0].startswith("data: ")
     chunk_1 = json.loads(non_empty_lines[0].replace("data: ", ""))
@@ -65,5 +69,3 @@ def test_chat_stream(test_client: TestClient) -> None:
 
     # Parse last chunk
     assert non_empty_lines[3] == "data: [DONE]"
-
-

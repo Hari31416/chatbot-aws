@@ -11,8 +11,30 @@ from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 
-from ..dependencies import get_llm_client, get_repository, get_settings, get_storage, get_current_user_id, get_vision_llm_client
-from ..models.schemas import Attachment, ChatImageResponse, ChatRequest, ChatResponse, ConversationResponse, MessageResponse, UpdateConversationRequest
+from ..dependencies import (
+    get_current_user_id,
+    get_llm_client,
+    get_rag_service,
+    get_repository,
+    get_settings,
+    get_storage,
+    get_vector_store,
+    get_vision_llm_client,
+)
+from ..models.schemas import (
+    Attachment,
+    ChatImageResponse,
+    ChatRequest,
+    ChatResponse,
+    ConversationResponse,
+    MessageResponse,
+    RagDocumentResponse,
+    RagIngestRequest,
+    RagIngestResponse,
+    RagSearchRequest,
+    RagSearchResponse,
+    UpdateConversationRequest,
+)
 from ..services.prompt import build_history_messages, build_user_content
 from ..services.storage import build_image_key, extension_for_mime
 from ..utils.time import to_epoch_seconds, utcnow, utcnow_iso
@@ -55,12 +77,54 @@ async def _update_context(
     )
 
 
+async def _build_chat_messages(
+    payload: ChatRequest,
+    history: list[dict],
+    vector_store,
+    top_k: int,
+    user_id: str,
+) -> list[dict]:
+    messages = build_history_messages(history)
+    if not payload.use_rag:
+        messages.append({"role": "user", "content": payload.message})
+        return messages
+
+    context_results = await vector_store.similarity_search(
+        payload.message,
+        user_id=user_id,
+        top_k=top_k,
+        documents=payload.rag_documents,
+    )
+    if not context_results:
+        logger.info("RAG requested but no context was retrieved")
+        messages.append({"role": "user", "content": payload.message})
+        return messages
+
+    context = "\n\n".join(
+        f"[Source: {item['source']} | Score: {item['score']}]\n{item['text']}"
+        for item in context_results
+        if item.get("text")
+    )
+    system_prompt = (
+        "You are an expert AI assistant. Answer the user's question using only "
+        "the retrieved context below. If the answer is not contained in the "
+        "context, state that you do not know based on the available documents.\n\n"
+        f"### Retrieved Context\n{context}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        *messages,
+        {"role": "user", "content": payload.message},
+    ]
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     payload: ChatRequest,
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     llm=Depends(get_llm_client),
+    vector_store=Depends(get_vector_store),
     user_id: str = Depends(get_current_user_id),
 ) -> ChatResponse:
     try:
@@ -94,9 +158,16 @@ async def chat(
             user_id,
         )
 
-        history = await _load_history(repo, conversation_id, settings.max_history_messages)
-        messages = build_history_messages(history)
-        messages.append({"role": "user", "content": payload.message})
+        history = await _load_history(
+            repo, conversation_id, settings.max_history_messages
+        )
+        messages = await _build_chat_messages(
+            payload=payload,
+            history=history,
+            vector_store=vector_store,
+            top_k=settings.rag_top_k,
+            user_id=user_id,
+        )
 
         assistant_text = await llm.generate(messages)
         if not assistant_text:
@@ -153,7 +224,8 @@ async def chat(
             )
         else:
             logger.exception(
-                "chat unexpected error conversation_id=%s", payload.conversation_id or "unknown"
+                "chat unexpected error conversation_id=%s",
+                payload.conversation_id or "unknown",
             )
         return ChatResponse(
             conversation_id=payload.conversation_id or "unknown",
@@ -167,12 +239,15 @@ async def chat_stream(
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     llm=Depends(get_llm_client),
+    vector_store=Depends(get_vector_store),
     user_id: str = Depends(get_current_user_id),
 ) -> StreamingResponse:
     try:
         conversation_id = payload.conversation_id or str(uuid4())
         logger.info(
-            "chat_stream request conversation_id=%s user_id=%s", conversation_id, user_id
+            "chat_stream request conversation_id=%s user_id=%s",
+            conversation_id,
+            user_id,
         )
         created_at = utcnow_iso()
         # Set dynamic conversation name based on first message (up to 30 chars)
@@ -200,9 +275,16 @@ async def chat_stream(
             user_id,
         )
 
-        history = await _load_history(repo, conversation_id, settings.max_history_messages)
-        messages = build_history_messages(history)
-        messages.append({"role": "user", "content": payload.message})
+        history = await _load_history(
+            repo, conversation_id, settings.max_history_messages
+        )
+        messages = await _build_chat_messages(
+            payload=payload,
+            history=history,
+            vector_store=vector_store,
+            top_k=settings.rag_top_k,
+            user_id=user_id,
+        )
 
         async def token_generator():
             accumulated_text = ""
@@ -244,7 +326,10 @@ async def chat_stream(
                 yield "data: [DONE]\n\n"
 
             except Exception as e:
-                logger.exception("Error in LLM stream generator for conversation_id=%s", conversation_id)
+                logger.exception(
+                    "Error in LLM stream generator for conversation_id=%s",
+                    conversation_id,
+                )
                 yield f"data: {json.dumps({'error': 'Stream generation interrupted', 'details': str(e)})}\n\n"
 
         return StreamingResponse(token_generator(), media_type="text/event-stream")
@@ -286,7 +371,9 @@ async def chat_image(
             )
         if len(data) > settings.max_image_bytes:
             logger.warning(
-                "chat_image image too large size=%d max=%d", len(data), settings.max_image_bytes
+                "chat_image image too large size=%d max=%d",
+                len(data),
+                settings.max_image_bytes,
             )
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -408,12 +495,96 @@ async def chat_image(
             )
         else:
             logger.exception(
-                "chat_image unexpected error conversation_id=%s", conversation_id or "unknown"
+                "chat_image unexpected error conversation_id=%s",
+                conversation_id or "unknown",
             )
         return ChatImageResponse(
             conversation_id=conversation_id or "unknown",
             error=error_msg,
         )
+
+
+@router.post(
+    "/rag/ingest",
+    response_model=RagIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_rag_text(
+    payload: RagIngestRequest,
+    repo=Depends(get_repository),
+    rag_service=Depends(get_rag_service),
+    user_id: str = Depends(get_current_user_id),
+) -> RagIngestResponse:
+    logger.info("RAG ingest request filename=%s user_id=%s", payload.filename, user_id)
+    try:
+        result = await rag_service.ingest_document(
+            payload.filename, payload.content, user_id
+        )
+    except Exception as exc:
+        logger.exception("RAG ingestion failed filename=%s", payload.filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ingestion failed: {exc}",
+        ) from exc
+
+    created_at = utcnow_iso()
+    await to_thread.run_sync(
+        repo.put_rag_document,
+        user_id,
+        result.document_id,
+        payload.filename,
+        result.chunks_ingested,
+        created_at,
+    )
+
+    return RagIngestResponse(
+        status="success",
+        filename=payload.filename,
+        document_id=result.document_id,
+        chunks_ingested=result.chunks_ingested,
+    )
+
+
+@router.get("/rag/documents", response_model=list[RagDocumentResponse])
+async def list_rag_documents(
+    repo=Depends(get_repository),
+    user_id: str = Depends(get_current_user_id),
+) -> list[RagDocumentResponse]:
+    items = await to_thread.run_sync(repo.list_rag_documents, user_id)
+    return [
+        RagDocumentResponse(
+            document_id=item.get("document_id"),
+            filename=item.get("filename"),
+            source_doc=item.get("source_doc") or item.get("filename"),
+            chunks_ingested=item.get("chunks_ingested", 0),
+            created_at=item.get("created_at"),
+            updated_at=item.get("updated_at", item.get("created_at")),
+        )
+        for item in items
+    ]
+
+
+@router.post("/rag/search", response_model=RagSearchResponse)
+async def search_rag_context(
+    payload: RagSearchRequest,
+    vector_store=Depends(get_vector_store),
+    user_id: str = Depends(get_current_user_id),
+) -> RagSearchResponse:
+    logger.info("RAG search request top_k=%d user_id=%s", payload.top_k, user_id)
+    try:
+        results = await vector_store.similarity_search(
+            payload.query,
+            user_id=user_id,
+            top_k=payload.top_k,
+            documents=payload.documents,
+        )
+    except Exception as exc:
+        logger.exception("RAG search failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search failed: {exc}",
+        ) from exc
+    return RagSearchResponse(query=payload.query, results=results)
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
@@ -437,7 +608,9 @@ async def list_conversations(
     return conversations
 
 
-@router.get("/conversations/{conversation_id}/messages", response_model=list[MessageResponse])
+@router.get(
+    "/conversations/{conversation_id}/messages", response_model=list[MessageResponse]
+)
 async def get_conversation_messages(
     conversation_id: str,
     repo=Depends(get_repository),
@@ -525,5 +698,3 @@ async def delete_conversation(
 
     await to_thread.run_sync(repo.delete_conversation, conversation_id)
     return {"deleted": True, "conversation_id": conversation_id}
-
-

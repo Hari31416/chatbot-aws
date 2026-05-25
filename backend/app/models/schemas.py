@@ -7,6 +7,47 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     conversation_id: str | None = None
     user_id: str | None = None
+    use_rag: bool = False
+    rag_documents: list[str] | None = None
+
+
+class RagIngestRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    content: str = Field(..., min_length=1)
+
+
+class RagIngestResponse(BaseModel):
+    status: str
+    filename: str
+    document_id: str
+    chunks_ingested: int
+
+
+class RagDocumentResponse(BaseModel):
+    document_id: str
+    filename: str
+    source_doc: str
+    chunks_ingested: int
+    created_at: str
+    updated_at: str
+
+
+class RagSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    top_k: int = Field(default=3, ge=1, le=20)
+    documents: list[str] | None = None
+
+
+class RagSearchResult(BaseModel):
+    text: str
+    source: str
+    score: float
+    key: str | None = None
+
+
+class RagSearchResponse(BaseModel):
+    query: str
+    results: list[RagSearchResult]
 
 
 class Attachment(BaseModel):
@@ -14,7 +55,6 @@ class Attachment(BaseModel):
     mime_type: str
     size_bytes: int
     presigned_url: str | None = None
-
 
 
 class ChatResponse(BaseModel):
@@ -48,4 +88,3 @@ class MessageResponse(BaseModel):
 
 class UpdateConversationRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-

@@ -18,6 +18,7 @@ import { Sidebar } from './components/Sidebar'
 import { ChatFeed } from './components/ChatFeed'
 import { InputBar } from './components/InputBar'
 import { SettingsModal } from './components/SettingsModal'
+import { DocumentsModal } from './components/DocumentsModal'
 
 export function App() {
   const { toast } = useToast()
@@ -48,6 +49,7 @@ export function App() {
     return typeof window !== 'undefined' ? window.innerWidth >= 768 : true
   })
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
+  const [isDocumentsOpen, setIsDocumentsOpen] = React.useState(false)
   const [lightboxImage, setLightboxImage] = React.useState<string | null>(null)
 
   // --- Chat & Conversation State ---
@@ -79,7 +81,7 @@ export function App() {
     refetchInterval: 30000,
   })
 
-  const { data: ragDocuments = [] } = useQuery({
+  const { data: ragDocuments = [], refetch: refetchRagDocuments } = useQuery({
     queryKey: ['ragDocuments', apiBaseUrl, isLoggedIn],
     queryFn: () => fetchRagDocuments(apiBaseUrl),
     enabled: Boolean(apiBaseUrl && isLoggedIn),
@@ -615,6 +617,7 @@ export function App() {
         theme={theme}
         setTheme={setTheme as any}
         handleLogout={handleLogout}
+        onOpenDocuments={() => setIsDocumentsOpen(true)}
       />
 
       {/* --- MAIN CONTENT WINDOW --- */}
@@ -693,6 +696,15 @@ export function App() {
         apiBaseUrl={apiBaseUrl}
         setApiBaseUrl={setApiBaseUrl}
         userId={userId}
+      />
+
+      {/* --- DOCUMENTS MANAGEMENT MODAL --- */}
+      <DocumentsModal
+        isOpen={isDocumentsOpen}
+        onClose={() => setIsDocumentsOpen(false)}
+        apiBaseUrl={apiBaseUrl}
+        documents={ragDocuments}
+        refetchDocuments={refetchRagDocuments}
       />
     </div>
   )

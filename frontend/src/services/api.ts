@@ -266,6 +266,39 @@ export async function fetchRagDocuments(apiBaseUrl: string): Promise<RagDocument
 }
 
 /**
+ * Ingests a new document for RAG
+ */
+export async function ingestRagDocument(
+  filename: string,
+  content: string,
+  apiBaseUrl: string
+): Promise<{ status: string; filename: string; document_id: string; chunks_ingested: number }> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, '')
+  const token = getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/rag/ingest`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ filename, content }),
+  })
+
+  return handleResponse<{
+    status: string
+    filename: string
+    document_id: string
+    chunks_ingested: number
+  }>(response, 'Failed to ingest RAG document')
+}
+
+
+/**
  * Progressive chunk structure for Response Streaming
  */
 export interface StreamChunk {

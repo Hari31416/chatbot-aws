@@ -13,6 +13,7 @@ interface SidebarProps {
   theme: string
   setTheme: (theme: 'light' | 'dark') => void
   handleLogout: () => void
+  onOpenDocuments?: () => void
 }
 
 export function Sidebar({
@@ -27,6 +28,7 @@ export function Sidebar({
   theme,
   setTheme,
   handleLogout,
+  onOpenDocuments,
 }: SidebarProps) {
   return (
     <>
@@ -69,14 +71,22 @@ export function Sidebar({
           </button>
         </div>
 
-        {/* Action Button: Create Chat */}
-        <div className="p-4">
+        {/* Action Buttons: Create Chat & Document Library */}
+        <div className="p-4 space-y-2">
           <button
             onClick={handleCreateConversation}
             className="w-full flex items-center justify-start gap-3 bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg px-4 py-2 text-sm font-medium transition-all cursor-pointer"
           >
             <span>+</span>
             <span>New Chat</span>
+          </button>
+          
+          <button
+            onClick={onOpenDocuments}
+            className="w-full flex items-center justify-start gap-3 bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg px-4 py-2 text-sm font-medium transition-all cursor-pointer"
+          >
+            <span>📚</span>
+            <span>Document Library</span>
           </button>
         </div>
 

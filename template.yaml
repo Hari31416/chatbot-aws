@@ -59,8 +59,8 @@ Globals:
         LITELLM_EMBEDDING_MODEL: !Ref LiteLlmEmbeddingModel
         LITELLM_VISION_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
         LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
-        S3_VECTOR_BUCKET_NAME: !Ref ChatbotVectorBucket
-        S3_VECTOR_INDEX_NAME: !Ref ChatbotVectorIndex
+        S3_VECTOR_BUCKET_NAME: !Ref S3VectorBucketName
+        S3_VECTOR_INDEX_NAME: !Ref S3VectorIndexName
         EMBEDDING_DIMENSION: 768
         RAG_TOP_K: 3
         RAG_CHUNK_SIZE: 800

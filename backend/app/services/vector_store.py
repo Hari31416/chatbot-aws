@@ -75,6 +75,7 @@ class VectorStoreClient:
                 model=self.embedding_model,
                 input=cleaned,
                 api_key=self.gemini_api_key,
+                dimensions=self.dimension,
             )
 
         try:

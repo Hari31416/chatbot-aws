@@ -1,12 +1,18 @@
+STACK_NAME ?= chat
+AWS_REGION ?= ap-south-1
+
+export STACK_NAME
+export AWS_REGION
+
 .PHONY: deploy-backend deploy-frontend deploy-all create-bucket
 
 deploy-backend:
 	@echo "🚀 Starting isolated backend infrastructure deployment..."
-	./deploy-backend.sh
+	./deploy-backend.sh $(STACK_NAME)
 
 deploy-frontend:
 	@echo "🚀 Starting React frontend compilation and S3 assets sync..."
-	./deploy-frontend.sh
+	./deploy-frontend.sh $(STACK_NAME)
 
 deploy-all: deploy-backend deploy-frontend
 

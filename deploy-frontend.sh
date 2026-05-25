@@ -4,7 +4,7 @@ set -e
 echo "========================================="
 echo "🔍 1. Fetching active AWS stack outputs..."
 echo "========================================="
-STACK_NAME="${1:-chat}" # Default to "chat", or pass stack name as the first argument
+STACK_NAME="${1:-${STACK_NAME:-chat}}" # Default to "chat", or pass stack name as the first argument
 AWS_REGION="${AWS_REGION:-ap-south-1}"
 
 # Retrieve FunctionUrl, FrontendBucket and FrontendUrl

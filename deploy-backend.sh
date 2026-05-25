@@ -1,8 +1,13 @@
 #!/bin/bash
 set -e
 
-STACK_NAME="${STACK_NAME:-chat}"
+STACK_NAME="${1:-${STACK_NAME:-chat}}"
 AWS_REGION="${AWS_REGION:-ap-south-1}"
+
+CONFIG_ENV="${CONFIG_ENV:-default}"
+if [[ "$STACK_NAME" == *"staging"* ]]; then
+  CONFIG_ENV="staging"
+fi
 S3_VECTOR_BUCKET_NAME="${S3_VECTOR_BUCKET_NAME:-chatbot-vectors-prod}"
 S3_VECTOR_INDEX_NAME="${S3_VECTOR_INDEX_NAME:-enterprise-kb}"
 LITELLM_EMBEDDING_MODEL="${LITELLM_EMBEDDING_MODEL:-gemini/gemini-embedding-2}"
@@ -25,7 +30,8 @@ echo "☁️ 3. Deploying infrastructure to AWS..."
 echo "========================================="
 sam deploy \
   --stack-name "$STACK_NAME" \
-  --region "$AWS_REGION"
+  --region "$AWS_REGION" \
+  --config-env "$CONFIG_ENV"
 
 
 

@@ -545,6 +545,92 @@ async def ingest_rag_text(
     )
 
 
+@router.post(
+    "/rag/ingest/file",
+    response_model=RagIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_rag_file(
+    file: UploadFile = File(...),
+    repo=Depends(get_repository),
+    rag_service=Depends(get_rag_service),
+    user_id: str = Depends(get_current_user_id),
+) -> RagIngestResponse:
+    import os
+
+    filename = file.filename or "uploaded_document"
+    logger.info("RAG file ingest request filename=%s user_id=%s", filename, user_id)
+
+    # 1. Enforce 20MB maximum file size limit
+    data = await file.read()
+    size_bytes = len(data)
+    max_bytes = 20 * 1024 * 1024  # 20MB
+    if size_bytes > max_bytes:
+        logger.warning(
+            "RAG file ingest rejected: file too large size=%d max=%d",
+            size_bytes,
+            max_bytes,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum size of 20MB (got {size_bytes / (1024 * 1024):.1f}MB)",
+        )
+
+    # 2. Determine if it is a plain text file or needs Textract
+    extension = os.path.splitext(filename.lower())[1] or ""
+    is_binary = extension in (".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif")
+
+    try:
+        if is_binary:
+            result = await rag_service.ingest_binary_document(
+                filename, data, file.content_type or "application/octet-stream", user_id
+            )
+        else:
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.warning(
+                    "Failed to decode file as UTF-8; falling back to Textract filename=%s",
+                    filename,
+                )
+                # Fallback to Textract if decoding fails
+                result = await rag_service.ingest_binary_document(
+                    filename, data, file.content_type or "application/octet-stream", user_id
+                )
+            else:
+                result = await rag_service.ingest_document(filename, content, user_id)
+    except ValueError as val_err:
+        logger.warning("RAG Ingestion validation error: %s", val_err)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(val_err),
+        )
+    except Exception as exc:
+        logger.exception("RAG Ingestion failed filename=%s", filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ingestion failed: {exc}",
+        ) from exc
+
+    created_at = utcnow_iso()
+    await to_thread.run_sync(
+        repo.put_rag_document,
+        user_id,
+        result.document_id,
+        filename,
+        result.chunks_ingested,
+        created_at,
+    )
+
+    return RagIngestResponse(
+        status="success",
+        filename=filename,
+        document_id=result.document_id,
+        chunks_ingested=result.chunks_ingested,
+    )
+
+
+
 @router.get("/rag/documents", response_model=list[RagDocumentResponse])
 async def list_rag_documents(
     repo=Depends(get_repository),

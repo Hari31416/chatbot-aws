@@ -1,6 +1,6 @@
 import * as React from 'react'
 import type { RagDocument } from '../types'
-import { ingestRagDocument } from '../services/api'
+import { ingestRagDocument, ingestRagFile } from '../services/api'
 import { useToast } from './ui/Toast'
 import { Button } from './ui/button'
 import {
@@ -64,63 +64,42 @@ export function DocumentsModal({
     (doc.filename || doc.source_doc || '').toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  // FileReader helper
   const handleFileIngestion = async (file: File) => {
     setIsSubmitting(true)
+
+    // Enforce maximum file size limit (20MB)
+    const maxBytes = 20 * 1024 * 1024
+    if (file.size > maxBytes) {
+      toast({
+        title: 'File Too Large',
+        description: `"${file.name}" exceeds the maximum supported size of 20MB.`,
+        type: 'warning'
+      })
+      setIsSubmitting(false)
+      return
+    }
+
     try {
-      const reader = new FileReader()
-      reader.onload = async (event) => {
-        const content = event.target?.result as string
-        if (!content || content.trim().length === 0) {
-          toast({
-            title: 'Empty File',
-            description: 'The selected file does not contain any readable text.',
-            type: 'error'
-          })
-          setIsSubmitting(false)
-          return
-        }
-        
-        try {
-          await ingestRagDocument(file.name, content, apiBaseUrl)
-          toast({
-            title: 'Ingestion Success!',
-            description: `"${file.name}" has been successfully chunked and vectorized.`,
-            type: 'success'
-          })
-          setSelectedFile(null)
-          refetchDocuments()
-          setActiveTab('catalog')
-        } catch (err: any) {
-          toast({
-            title: 'Ingestion Failed',
-            description: err.message || 'An error occurred during vectorization.',
-            type: 'error'
-          })
-        } finally {
-          setIsSubmitting(false)
-        }
-      }
-      
-      reader.onerror = () => {
-        toast({
-          title: 'Read Error',
-          description: 'Failed to read the local file.',
-          type: 'error'
-        })
-        setIsSubmitting(false)
-      }
-      
-      reader.readAsText(file)
+      await ingestRagFile(file, apiBaseUrl)
+      toast({
+        title: 'Ingestion Success!',
+        description: `"${file.name}" has been successfully chunked and vectorized.`,
+        type: 'success'
+      })
+      setSelectedFile(null)
+      refetchDocuments()
+      setActiveTab('catalog')
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: err.message || 'An unexpected error occurred.',
+        title: 'Ingestion Failed',
+        description: err.message || 'An error occurred during vectorization.',
         type: 'error'
       })
+    } finally {
       setIsSubmitting(false)
     }
   }
+
 
   // Handle Paste Ingestion
   const handlePasteSubmit = async (e: React.FormEvent) => {
@@ -392,7 +371,7 @@ export function DocumentsModal({
                       type="file"
                       id="rag-file-picker"
                       onChange={handleFileChange}
-                      accept=".txt,.md,.markdown,.json,.csv,.js,.ts,.py,.html,.css"
+                      accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.txt,.md,.markdown,.json,.csv,.js,.ts,.py,.html,.css"
                       className="hidden"
                     />
                     
@@ -404,7 +383,7 @@ export function DocumentsModal({
                       Drag and drop your file here
                     </h3>
                     <p className="text-xs text-zinc-450 mt-1 mb-4">
-                      Supports Text, Markdown, CSV, JSON and basic code files (up to 1MB)
+                      Supports PDF, Images, Text, Markdown, CSV, JSON and code (up to 20MB, max 100 pages)
                     </p>
                     
                     <Button

@@ -299,6 +299,41 @@ export async function ingestRagDocument(
 
 
 /**
+ * Ingests a physical document file (e.g. PDF, Image, or text file) using multipart/form-data
+ */
+export async function ingestRagFile(
+  file: File,
+  apiBaseUrl: string
+): Promise<{ status: string; filename: string; document_id: string; chunks_ingested: number }> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, '')
+  const token = getCurrentSessionToken()
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/rag/ingest/file`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  return handleResponse<{
+    status: string
+    filename: string
+    document_id: string
+    chunks_ingested: number
+  }>(response, 'Failed to ingest physical RAG document')
+}
+
+
+
+/**
  * Progressive chunk structure for Response Streaming
  */
 export interface StreamChunk {

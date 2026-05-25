@@ -106,6 +106,12 @@ Resources:
                 - s3vectors:ListIndexes
                 - s3vectors:ListVectorBuckets
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - textract:DetectDocumentText
+                - textract:StartDocumentTextDetection
+                - textract:GetDocumentTextDetection
+              Resource: "*"
       Environment:
         Variables:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap

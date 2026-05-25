@@ -213,6 +213,17 @@ class FakeRagService:
         )
         return RagIngestResult(document_id="doc-test", chunks_ingested=1)
 
+    async def ingest_binary_document(
+        self, filename: str, data: bytes, mime_type: str, user_id: str
+    ) -> RagIngestResult:
+        if "limit_exceeded" in filename:
+            raise ValueError("Document exceeds maximum page limit of 100 pages (got 150 pages)")
+        self.ingested.append(
+            {"filename": filename, "data": data, "mime_type": mime_type, "user_id": user_id}
+        )
+        return RagIngestResult(document_id="doc-test", chunks_ingested=2)
+
+
 
 @pytest.fixture()
 def test_client() -> Iterator[TestClient]:

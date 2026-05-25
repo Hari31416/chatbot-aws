@@ -140,15 +140,30 @@ def get_vector_store() -> VectorStoreClient:
     )
 
 
+@lru_cache
+def get_textract_client():
+    settings = get_settings()
+    return boto3.client(
+        "textract",
+        region_name=settings.aws_region,
+    )
+
+
 def get_rag_service(
     vector_store: VectorStoreClient = Depends(get_vector_store),
 ) -> RagService:
     settings = get_settings()
+    s3_client = get_s3_client()
+    textract_client = get_textract_client()
     return RagService(
         vector_store=vector_store,
         chunk_size=settings.rag_chunk_size,
         chunk_overlap=settings.rag_chunk_overlap,
+        s3_client=s3_client,
+        s3_bucket_name=settings.s3_bucket_name,
+        textract_client=textract_client,
     )
+
 
 
 logger = logging.getLogger(__name__)

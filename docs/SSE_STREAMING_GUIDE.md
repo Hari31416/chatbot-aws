@@ -10,18 +10,19 @@ In our current synchronous setup, the frontend sends a prompt, and the backend w
 
 ### Comparison Table
 
-| Feature | Current Synchronous JSON | Proposed SSE Streaming |
-| :--- | :--- | :--- |
-| **Response Format** | `application/json` | `text/event-stream` |
+| Feature                       | Current Synchronous JSON                     | Proposed SSE Streaming                       |
+| :---------------------------- | :------------------------------------------- | :------------------------------------------- |
+| **Response Format**           | `application/json`                           | `text/event-stream`                          |
 | **Time-to-First-Byte (TTFB)** | High (5–12 seconds, dependent on LLM length) | Ultra-Low (200–500ms, instant token display) |
-| **Gateway Integration** | API Gateway HTTP API v2 | Lambda Function URL (FURL) |
-| **Lambda Adapter** | Mangum (ASGI-to-Lambda) | AWS Lambda Web Adapter (LWA) |
-| **Authentication** | API Gateway Cognito Authorizer | In-App FastAPI JWT Dependency |
-| **Cost** | API Gateway Request + Lambda Duration | Lambda Duration Only (FURL is free) |
+| **Gateway Integration**       | API Gateway HTTP API v2                      | Lambda Function URL (FURL)                   |
+| **Lambda Adapter**            | Mangum (ASGI-to-Lambda)                      | AWS Lambda Web Adapter (LWA)                 |
+| **Authentication**            | API Gateway Cognito Authorizer               | In-App FastAPI JWT Dependency                |
+| **Cost**                      | API Gateway Request + Lambda Duration        | Lambda Duration Only (FURL is free)          |
 
 ### Real-Time Flow Comparison
 
 #### Current Setup (Synchronous Buffer)
+
 ```
 [React Frontend] --- (POST /chat) ---> [API Gateway HTTP API] ---> [FastAPI + Mangum]
                                                                         |
@@ -31,6 +32,7 @@ In our current synchronous setup, the frontend sends a prompt, and the backend w
 ```
 
 #### Proposed Setup (Active Chunk Stream)
+
 ```mermaid
 graph TD
     React[React Frontend] -->|1. POST /chat + Cognito JWT| FURL[Lambda Function URL]
@@ -46,6 +48,7 @@ graph TD
 ## 2. Infrastructure Changes (`template.yaml`)
 
 To support true response streaming, we must address two limitations in our current stack:
+
 1. **API Gateway HTTP APIs (v2)** do not support chunked/streaming responses. They buffer all responses.
 2. **Mangum** lacks native support for chunked response streaming in Lambda environments.
 
@@ -82,7 +85,8 @@ ChatbotBackendFunction:
       # instead of configuring it here. This avoids duplicate CORS headers
       # (e.g. Access-Control-Allow-Origin) which would cause the browser to block calls.
 ```
-```
+
+````
 
 ---
 
@@ -117,7 +121,7 @@ async def chat_stream(
     user_message_id = str(uuid4())
     assistant_message_id = str(uuid4())
     created_at = utcnow_iso()
-    
+
     # 1. Immediately log conversation metadata and store the User prompt in DynamoDB
     conv_name = payload.message[:30] + "..." if len(payload.message) > 30 else payload.message
     await to_thread.run_sync(
@@ -143,7 +147,7 @@ async def chat_stream(
                     accumulated_text += token
                     # Yield compliant SSE event chunk
                     yield f"data: {json.dumps({'text': token, 'conversation_id': conversation_id})}\n\n"
-            
+
             # 4. Success: Save compiled Assistant response to database
             assistant_created_at = utcnow_iso()
             await to_thread.run_sync(
@@ -166,7 +170,7 @@ async def chat_stream(
                 payload.message,
                 accumulated_text
             )
-            
+
             # Send close event
             yield "data: [DONE]\n\n"
 
@@ -175,7 +179,7 @@ async def chat_stream(
             yield f"data: {json.dumps({'error': 'Stream generation interrupted', 'details': str(e)})}\n\n"
 
     return StreamingResponse(token_generator(), media_type="text/event-stream")
-```
+````
 
 ---
 
@@ -198,20 +202,23 @@ export async function sendChatMessageStream(
   conversationId?: string,
   onChunk: (text: string) => void,
   onComplete: (finalConversationId: string) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
 ): Promise<void> {
   try {
-    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat/stream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
+    const response = await fetch(
+      `${import.meta.env.VITE_API_BASE_URL}/chat/stream`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          message,
+          conversation_id: conversationId,
+        }),
       },
-      body: JSON.stringify({
-        message,
-        conversation_id: conversationId,
-      }),
-    });
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -233,13 +240,13 @@ export async function sendChatMessageStream(
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n\n");
-      
+
       // Save trailing incomplete line back to the buffer
       buffer = lines.pop() || "";
 
       for (const line of lines) {
         if (!line.trim() || !line.startsWith("data: ")) continue;
-        
+
         const dataStr = line.replace(/^data:\s*/, "");
         if (dataStr === "[DONE]") continue;
 
@@ -275,9 +282,11 @@ export async function sendChatMessageStream(
 ## 5. Security & Authentication Model
 
 ### The Shift from API Gateway Authorizers to FastAPI Middleware
+
 By utilizing Lambda Function URLs, we lose the native Cognito integration built into API Gateway (`ChatbotHttpApi`). Authentication is instead moved directly into the Python application layer.
 
 #### FastAPI JWT Authentication Dependency
+
 In `backend/app/dependencies.py`, we implement a validator that handles the Cognito JWKS key rotation, signature verification, and expiration validation:
 
 ```python
@@ -298,29 +307,29 @@ async def get_current_user_id(
 ) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token scheme")
-    
+
     token = authorization.split(" ")[1]
     jwks_url = COGNITO_JWKS_URL.format(
-        region=settings.aws_region, 
+        region=settings.aws_region,
         user_pool_id=settings.cognito_user_pool_id
     )
-    
+
     try:
         # 1. Fetch Cognito Public Keys
         jwks = get_jwks(jwks_url)
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header["kid"]
-        
+
         # 2. Match Key ID
         public_key = None
         for key in jwks["keys"]:
             if key["kid"] == kid:
                 public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
                 break
-                
+
         if not public_key:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token key identifier not found")
-        
+
         # 3. Decode & Verify JWT
         payload = jwt.decode(
             token,
@@ -329,10 +338,10 @@ async def get_current_user_id(
             audience=settings.cognito_client_id,
             options={"verify_exp": True}
         )
-        
+
         # 4. Return unique sub / user_id
         return payload["sub"]
-        
+
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
     except Exception as e:
@@ -346,27 +355,32 @@ async def get_current_user_id(
 Transitioning to this streaming model has subtle trade-offs concerning serverless costs and resource management:
 
 ### A. Cost Structure: Neutral to Beneficial
-1. **Lambda Compute Duration (Direct Neutrality):** 
+
+1. **Lambda Compute Duration (Direct Neutrality):**
    AWS Lambda is billed in GB-seconds of execution time. If generating a response takes 5 seconds, the Lambda runs for exactly 5 seconds in both architectures. The compute cost remains identical.
-2. **API Gateway Elimination (Pure Cost Saving):** 
+2. **API Gateway Elimination (Pure Cost Saving):**
    API Gateway charges per request and per GB transferred. **Lambda Function URLs are completely free of charge.** By routing chat traffic directly through Function URLs, you eliminate API Gateway costs entirely for the conversational endpoints.
 
 ### B. User Experience Impact (TTFB)
-* **Standard REST/HTTP Payload Response:** A complete 400-word response takes roughly **6.5 seconds** to appear. The user experiences high latency and potential disconnection.
-* **Streaming Response:** The first token renders in **250ms**. The subsequent generation updates the UI organically at $\approx 50\text{ tokens/sec}$, providing a vastly superior, modern interactive feeling.
+
+- **Standard REST/HTTP Payload Response:** A complete 400-word response takes roughly **6.5 seconds** to appear. The user experiences high latency and potential disconnection.
+- **Streaming Response:** The first token renders in **250ms**. The subsequent generation updates the UI organically at $\approx 50\text{ tokens/sec}$, providing a vastly superior, modern interactive feeling.
 
 ### C. Concurrency Management
+
 Because streaming holds a connection open for the entire duration of the token generation, individual Lambda functions remain active longer.
-* **Concurrency Formula:** 
+
+- **Concurrency Formula:**
   $$\text{Concurrent Executions} = \text{Requests per Second} \times \text{Average Execution Time (Seconds)}$$
-* In a synchronous JSON setup, if a quick error occurs, the execution is terminated immediately. In streaming, a client closing their browser tab might keep the stream active on the server unless the connection teardown is handled correctly.
-* **Remediation:** In our FastAPI router loop, we handle connection closes proactively using standard HTTP disconnections to interrupt the generator and avoid wasted execution cycles.
+- In a synchronous JSON setup, if a quick error occurs, the execution is terminated immediately. In streaming, a client closing their browser tab might keep the stream active on the server unless the connection teardown is handled correctly.
+- **Remediation:** In our FastAPI router loop, we handle connection closes proactively using standard HTTP disconnections to interrupt the generator and avoid wasted execution cycles.
 
 ---
 
 ## Summary of Next Steps for Implementation
 
 To implement SSE streaming in our serverless chatbot environment, follow these phases:
+
 1. **Dependency Addition:** Install `PyJWT` or `python-jose` for JWT validation, and add the `@microsoft/fetch-event-source` package to the frontend (or write a custom chunk decoder).
 2. **FastAPI Route Migration:** Introduce `/chat/stream` alongside the current `/chat` endpoint to prevent disruption.
 3. **template.yaml Layer Upgrade:** Package AWS Lambda Web Adapter as a Lambda Layer and configure the API with a Function URL in `template.yaml`.

@@ -8,26 +8,29 @@ To maintain high availability and enable safe feature iteration, this document o
 
 Each environment should run isolated serverless resource sets:
 
-| Component | Staging Environment | Production Environment |
-| :--- | :--- | :--- |
-| **AWS Stack Name** | `chat-staging` | `chat` (or `chat-prod`) |
-| **Database Table** | `chatbot-table-staging` | `chatbot-table-prod` |
-| **S3 Uploads Bucket** | `chatbot-uploads-<account>-staging` | `chatbot-uploads-<account>-prod` |
+| Component              | Staging Environment                  | Production Environment            |
+| :--------------------- | :----------------------------------- | :-------------------------------- |
+| **AWS Stack Name**     | `chat-staging`                       | `chat` (or `chat-prod`)           |
+| **Database Table**     | `chatbot-table-staging`              | `chatbot-table-prod`              |
+| **S3 Uploads Bucket**  | `chatbot-uploads-<account>-staging`  | `chatbot-uploads-<account>-prod`  |
 | **S3 Frontend Bucket** | `chatbot-frontend-<account>-staging` | `chatbot-frontend-<account>-prod` |
-| **Cognito User Pool** | `chatbot-users-staging` | `chatbot-users-prod` |
-| **Invocation Route** | Lambda Function URL (Streaming) | Lambda Function URL (Streaming) |
+| **Cognito User Pool**  | `chatbot-users-staging`              | `chatbot-users-prod`              |
+| **Invocation Route**   | Lambda Function URL (Streaming)      | Lambda Function URL (Streaming)   |
 
 ---
 
 ## Three Strategies for Environment Management
 
 ### Strategy 1: Multi-Environment via SAM Profile Configurations (Recommended)
+
 This approach deploys multiple stacks into a **single AWS account** by using independent configurations under separate profile blocks in [samconfig.toml](file:///Users/hari/Desktop/sandbox/chatbot-aws/samconfig.toml).
 
 #### How it works:
+
 SAM reads different parameter files using the `--config-env` CLI argument. Both stacks deploy cleanly alongside each other in the same region without overlapping because every resource name includes the `${Environment}` suffix.
 
 #### Implementation in `samconfig.toml`:
+
 ```toml
 # Default/Production environment parameters
 [default.deploy.parameters]
@@ -41,6 +44,7 @@ parameter_overrides = "Environment=\"staging\" LogLevel=\"DEBUG\""
 ```
 
 #### Deployment commands:
+
 ```bash
 # 1. Deploy Staging
 sam build --use-container
@@ -61,13 +65,16 @@ sam deploy --config-env default
 ---
 
 ### Strategy 2: Multi-Account Isolation (Enterprise Best Practice)
+
 For absolute safety, staging and production are deployed into **completely different AWS accounts** (e.g., managed via AWS Organizations or AWS Control Tower).
 
 #### How it works:
+
 1. You maintain two separate AWS CLI profiles locally (e.g., `[profile staging]` and `[profile prod]` in `~/.aws/config`).
 2. Before deploying, you export the target `AWS_PROFILE` or pass the `--profile` parameter.
 
 #### Deployment commands:
+
 ```bash
 # 1. Deploy Staging Account
 export AWS_PROFILE=staging
@@ -90,14 +97,17 @@ sam deploy --config-env default
 ---
 
 ### Strategy 3: Branch-Driven CI/CD Pipelines (Automated DevOps)
+
 Instead of running manual scripts from local terminals, developers leverage automated pipelines (e.g., **GitHub Actions**, **GitLab CI**, or **AWS CodePipeline**) triggered on git events.
 
 #### How it works:
+
 - Pull Requests or merges into the `develop` branch trigger staging builds.
 - Merges into the `main` or `release` branch trigger production builds.
 - AWS credentials are securely saved as repository Secrets.
 
 #### Example GitHub Actions Workflow (`.github/workflows/deploy.yml`):
+
 ```yaml
 name: Serverless Deployment Pipeline
 on:

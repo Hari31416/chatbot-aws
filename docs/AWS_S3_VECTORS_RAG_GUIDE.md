@@ -1,6 +1,6 @@
 # AWS S3 Vectors & LiteLLM Gemini RAG Integration Guide
 
-This guide details the technical plan, architecture, and step-by-step codebase modifications required to integrate a native **Retrieval-Augmented Generation (RAG)** pipeline into the chatbot application. 
+This guide details the technical plan, architecture, and step-by-step codebase modifications required to integrate a native **Retrieval-Augmented Generation (RAG)** pipeline into the chatbot application.
 
 This implementation leverages **Amazon S3 Vectors** (in preview) for serverless, cost-effective, high-scale vector storage and similarity search, combined with **LiteLLM** using the **Google Gemini-Embedding-2** model for high-fidelity text embedding generation.
 
@@ -56,14 +56,18 @@ sequenceDiagram
 ```
 
 ### 1.1 Ingestion Pipeline Mechanics
+
 For the initial version, the system processes clean, simple text inputs:
+
 1. **Source Upload:** The user submits raw text data or files via the client dashboard.
 2. **Text Chunking:** The backend partitions incoming text using a deterministic chunking policy (e.g., recursive character text splitting with a chunk size of 800 characters and a 10% overlap).
 3. **Embedding Generation:** The backend invokes the LiteLLM API wrapper, sending text chunks in batches to get their corresponding 768-dimension vectors from the `gemini/gemini-embedding-2` model.
 4. **Vector Storage:** The backend connects to the S3 Vectors client and issues a `put_vectors` batch call, uploading vectors mapped to chunk texts and source identifiers inside metadata fields.
 
 ### 1.2 Query & Context Retrieval Mechanics
+
 When a user submits a chat prompt:
+
 1. **Query Embedding:** The incoming chat string is embedded via LiteLLM to yield the query vector.
 2. **Similarity Search:** The query vector is passed to the S3 Vectors client via `query_vectors` targeting the defined vector index.
 3. **Context Augmentation:** The top $K$ relevant text chunks are extracted from the S3 Vectors response and assembled into a formatted markdown `[Context Block]`.
@@ -73,9 +77,10 @@ When a user submits a chat prompt:
 
 ## 2. Amazon S3 Vectors: Direct Integration Guide
 
-**Amazon S3 Vectors** provides a fully serverless, highly durable, and cost-effective native vector indexing service inside Amazon S3. 
+**Amazon S3 Vectors** provides a fully serverless, highly durable, and cost-effective native vector indexing service inside Amazon S3.
 
 ### 2.1 Boto3 S3 Vectors Client Lifecycle
+
 To interact with S3 Vectors, you initialize a specialized client in `boto3`:
 
 ```python
@@ -88,6 +93,7 @@ s3vectors_client = boto3.client("s3vectors", region_name="us-east-1")
 ### 2.2 S3 Vectors Control Plane Operations
 
 #### A. Creating a Vector Bucket
+
 Before storing vector indexes, you must establish an S3 Vector Bucket. Vector buckets are distinct from standard S3 buckets and are purpose-built for vector indexes:
 
 ```python
@@ -97,9 +103,11 @@ response = s3vectors_client.create_vector_bucket(
 ```
 
 #### B. Creating a Vector Index
+
 Inside a Vector Bucket, you provision individual Vector Indexes. You must explicitly configure the vector dimensions, precision, and similarity metric.
-* For `gemini/gemini-embedding-2`, the standard output size is **768 dimensions**.
-* The best similarity metric for text semantic search is **Cosine Similarity** (`cosine`).
+
+- For `gemini/gemini-embedding-2`, the standard output size is **768 dimensions**.
+- The best similarity metric for text semantic search is **Cosine Similarity** (`cosine`).
 
 ```python
 response = s3vectors_client.create_index(
@@ -114,6 +122,7 @@ response = s3vectors_client.create_index(
 ### 2.3 S3 Vectors Data Plane Operations
 
 #### A. Ingesting Vectors (`put_vectors`)
+
 Vectors must be supplied as an array of `float32` arrays. Up to 500 items can be written in a single batch.
 
 ```python
@@ -142,6 +151,7 @@ response = s3vectors_client.put_vectors(
 ```
 
 #### B. Querying Similarity (`query_vectors`)
+
 You perform similarity searches by sending a query vector and requesting the top-K closest neighbors. Optional key-value metadata filters can filter matching candidates.
 
 ```python
@@ -176,6 +186,7 @@ for item in response.get("vectors", []):
 LiteLLM supports native batch embedding generation using the highly optimized Google `gemini-embedding-2` model via either direct Gemini API or Google Vertex AI.
 
 ### 3.1 Setup
+
 Using the Gemini API directly requires setting the `GEMINI_API_KEY` environment variable. The value is already securely present in the `.env` configuration file:
 
 ```bash
@@ -183,6 +194,7 @@ GEMINI_API_KEY=AIzaSyD2a4p...
 ```
 
 ### 3.2 Basic Usage in Python
+
 Generating embeddings for multiple document chunks is done using the standard asynchronous or synchronous LiteLLM `embedding` method:
 
 ```python
@@ -228,6 +240,7 @@ backend/
 ```
 
 ### 4.1 Modifying `backend/app/settings.py`
+
 Add settings variables to manage the RAG pipeline configurations:
 
 ```python
@@ -254,6 +267,7 @@ class Settings(BaseSettings):
 ```
 
 ### 4.2 Modifying `backend/app/models/schemas.py`
+
 Add optional RAG parameters (`use_rag` and `rag_documents`) inside the Pydantic schema for `ChatRequest`:
 
 ```python
@@ -263,13 +277,14 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     conversation_id: str | None = None
     user_id: str | None = None
-    
+
     # New parameters to govern dynamic RAG routing
     use_rag: bool = Field(default=False)
     rag_documents: list[str] | None = Field(default=None)
 ```
 
 ### 4.3 Modifying `backend/app/dependencies.py`
+
 Establish the dependency injection logic for the Vector Store and RAG services. This logic securely retrieves the Gemini API Key from the AWS SSM Parameter Store using the existing `litellm_vision_api_key` parameter (passed via the `LITELLM_VISION_API_KEY_PARAMETER` environment variable):
 
 ```python
@@ -281,7 +296,7 @@ from .services.rag import RagService
 @lru_cache
 def get_vector_store() -> VectorStoreClient:
     settings = get_settings()
-    
+
     # Retrieve Gemini API Key from the existing SSM parameter
     api_key = settings.litellm_vision_api_key
     ssm_param_name = os.getenv("LITELLM_VISION_API_KEY_PARAMETER")  # points to /chatbot/litellm_vision_api_key
@@ -308,6 +323,7 @@ def get_rag_service(vector_store=Depends(get_vector_store)) -> RagService:
 ```
 
 ### 4.4 Adding `backend/app/services/vector_store.py`
+
 Create a clean client class that wraps `boto3` `s3vectors` client calls and handles LiteLLM embeddings:
 
 ```python
@@ -334,7 +350,7 @@ class VectorStoreClient:
         self.embedding_model = embedding_model
         self.dimension = dimension
         self.gemini_api_key = gemini_api_key
-        
+
         # Initialize boto3 S3 Vectors client
         self.client = boto3.client("s3vectors", region_name=region_name)
         logger.info(
@@ -451,6 +467,7 @@ class VectorStoreClient:
 ```
 
 ### 4.5 Adding `backend/app/services/rag.py`
+
 Create a service class to handle text chunking and orchestration:
 
 ```python
@@ -478,14 +495,14 @@ class RagService:
         chunks = self._split_text(content)
         if not chunks:
             return 0
-        
+
         # Generate embeddings
         embeddings = await self.vector_store.get_embeddings(chunks)
-        
+
         # Build keys
         doc_id = str(uuid.uuid4())[:8]
         keys = [f"doc_{doc_id}_chunk_{i}" for i in range(len(chunks))]
-        
+
         # Store in S3 Vectors
         await self.vector_store.upsert_chunks(
             keys=keys,
@@ -497,9 +514,11 @@ class RagService:
 ```
 
 ### 4.6 Modifying `backend/app/api/routes.py`
+
 Augment standard chats with context retrieval:
 
 #### Modifying the System Prompt
+
 To ensure the LLM outputs replies grounded entirely in your retrieval vector documents, you update the LLM payload system context:
 
 ```python
@@ -510,8 +529,8 @@ context_results = []
 if payload.use_rag:
     # Query similarity search, filtering by selected documents (if specified)
     context_results = await vector_store.similarity_search(
-        payload.message, 
-        top_k=3, 
+        payload.message,
+        top_k=3,
         documents=payload.rag_documents
     )
 
@@ -540,6 +559,7 @@ assistant_text = await llm.generate(messages)
 ```
 
 #### New RAG Endpoints
+
 Introduce two endpoints for direct ingestion and testing of the S3 vector database:
 
 ```python
@@ -584,7 +604,9 @@ async def search_rag_context(
 While simple text chunking serves as the baseline, the architecture is ready to scale to heavy multi-page digital PDFs using **AWS Textract**.
 
 ### 5.1 Why AWS Textract?
+
 Simple PDF parsers (like PyMuPDF) extract plain raw text strings. However, they struggle with structural components like:
+
 1. **Multi-Column Layouts:** Mixing independent text blocks together in horizontal lines.
 2. **Tables and Forms:** Scrambling cell grids into unreadable strings, breaking mathematical or list relationships.
 3. **Embedded Images/Diagrams:** Completely omitting visual concepts.
@@ -592,6 +614,7 @@ Simple PDF parsers (like PyMuPDF) extract plain raw text strings. However, they 
 AWS Textract uses specialized deep-learning models to parse digital layout structures, preserving grid relationships and extracting form keys/values natively.
 
 ### 5.2 Scaled PDF Ingestion Pipeline
+
 When scaling PDF files later, the ingestion pipeline will evolve into an asynchronous pattern:
 
 ```mermaid
@@ -616,21 +639,22 @@ graph TD
 To permit your Lambda execution environment to manage the S3 Vector buckets and run queries, update the IAM policy declarations in the backend function's serverless resource.
 
 ### Modifying IAM execution role in `template.yaml`:
+
 ```yaml
 # Add to ChatbotBackendFunction.Properties.Policies in template.yaml:
 
-        # S3 Vectors Operations permissions
-        - Statement:
-            - Effect: Allow
-              Action:
-                - s3vectors:CreateVectorBucket
-                - s3vectors:CreateIndex
-                - s3vectors:PutVectors
-                - s3vectors:QueryVectors
-                - s3vectors:GetVectors
-                - s3vectors:ListIndexes
-                - s3vectors:ListVectorBuckets
-              Resource: "*"
+# S3 Vectors Operations permissions
+- Statement:
+    - Effect: Allow
+      Action:
+        - s3vectors:CreateVectorBucket
+        - s3vectors:CreateIndex
+        - s3vectors:PutVectors
+        - s3vectors:QueryVectors
+        - s3vectors:GetVectors
+        - s3vectors:ListIndexes
+        - s3vectors:ListVectorBuckets
+      Resource: "*"
 ```
 
 ---
@@ -640,6 +664,7 @@ To permit your Lambda execution environment to manage the S3 Vector buckets and 
 To confirm the correctness of the LiteLLM Gemini embedding and S3 Vectors similarity matching:
 
 ### 7.1 Automated Backend Integration Tests
+
 Add unit/integration tests under `backend/tests/test_rag.py` to assert correct dimensions and retrieval performance:
 
 ```python
@@ -658,10 +683,10 @@ async def test_gemini_embedding_generation(settings):
         dimension=settings.embedding_dimension,
         gemini_api_key=settings.litellm_api_key
     )
-    
+
     test_text = "Checking that Gemini-Embedding-2 returns the expected dimension size."
     vectors = await client.get_embeddings([test_text])
-    
+
     assert len(vectors) == 1
     assert len(vectors[0]) == 768  # Gemini dimension
 
@@ -673,6 +698,7 @@ async def test_s3_vectors_ingestion_and_query(settings):
 ```
 
 ### 7.2 Manual Verification Steps
+
 1. **Initialize Indexes:** Invoke `VectorStoreClient.initialize_storage()` to automatically provision the Vector Bucket and the default Index in the AWS Account.
 2. **Ingest Verification Payload:** Execute a curl command to insert specific facts:
    ```bash
@@ -689,4 +715,4 @@ async def test_s3_vectors_ingestion_and_query(settings):
         -d '{"query": "What is the Wi-Fi password?"}'
    ```
    Assert that the returned context chunks list `company_rules.txt` with a high similarity score.
-4. **Chat Ingestion Verification:** Message the chatbot: *"What is the secure Wi-Fi password?"* Assert that the chatbot replies: *"The secure Wi-Fi network password is AntigravityRAG2026."* based entirely on the retrieved S3 Vectors document.
+4. **Chat Ingestion Verification:** Message the chatbot: _"What is the secure Wi-Fi password?"_ Assert that the chatbot replies: _"The secure Wi-Fi network password is AntigravityRAG2026."_ based entirely on the retrieved S3 Vectors document.

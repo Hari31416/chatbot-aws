@@ -21,12 +21,12 @@ The frontend runs entirely client-side in the user's browser. It is compiled int
 
 ### AWS Services & Configurations
 
-| AWS Component | Configuration | Purpose |
-|---|---|---|
-| **S3 Bucket** | `chatbot-frontend-<AccountId>-<Env>` | Direct asset storage |
-| **Website Hosting** | `Index: index.html`, `Error: index.html` | Handles root loading and single-page routing |
-| **Public Access** | `BlockPublicAccess: false` | Allows the public to fetch website files |
-| **Bucket Policy** | `PublicReadGetObject` | Allows read-only `s3:GetObject` access to `*` |
+| AWS Component       | Configuration                            | Purpose                                       |
+| ------------------- | ---------------------------------------- | --------------------------------------------- |
+| **S3 Bucket**       | `chatbot-frontend-<AccountId>-<Env>`     | Direct asset storage                          |
+| **Website Hosting** | `Index: index.html`, `Error: index.html` | Handles root loading and single-page routing  |
+| **Public Access**   | `BlockPublicAccess: false`               | Allows the public to fetch website files      |
+| **Bucket Policy**   | `PublicReadGetObject`                    | Allows read-only `s3:GetObject` access to `*` |
 
 ---
 
@@ -34,12 +34,12 @@ The frontend runs entirely client-side in the user's browser. It is compiled int
 
 Vite environments inject variables during build-time (bundling). We configure these variables inside `/frontend/.env` locally or via the CLI in production.
 
-*   **`PORT`**: Dev server port (default `3000`).
-*   **`ALLOWED_HOSTS`**: Authorized hostnames for Vite local server.
-*   **`VITE_API_BASE_URL`**: Deployed AWS API Gateway base URL.
-*   **`VITE_COGNITO_USER_POOL_ID`**: Active AWS Cognito User Pool.
-*   **`VITE_COGNITO_CLIENT_ID`**: Active AWS Cognito Client App ID (without secrets).
-*   **`VITE_AWS_REGION`**: AWS deployment region (e.g., `ap-south-1`).
+- **`PORT`**: Dev server port (default `3000`).
+- **`ALLOWED_HOSTS`**: Authorized hostnames for Vite local server.
+- **`VITE_API_BASE_URL`**: Deployed AWS API Gateway base URL.
+- **`VITE_COGNITO_USER_POOL_ID`**: Active AWS Cognito User Pool.
+- **`VITE_COGNITO_CLIENT_ID`**: Active AWS Cognito Client App ID (without secrets).
+- **`VITE_AWS_REGION`**: AWS deployment region (e.g., `ap-south-1`).
 
 ---
 
@@ -50,11 +50,11 @@ We have automated the deployment pipeline using modular shell scripts and a root
 ### The Deployment Scripts
 
 1.  **[deploy-frontend.sh](file:///Users/hari/Desktop/sandbox/chatbot-aws/deploy-frontend.sh)**:
-    *   Queries CloudFormation stack outputs using the AWS CLI for the active stack (accepts an optional first command-line argument like `chat-staging` to specify the target environment, defaulting to `chat`).
-    *   Retrieves the active `ApiUrl`, `FrontendBucket`, `UserPoolId`, and `UserPoolClientId`.
-    *   Falls back to your custom S3 bucket name `chat-hari31416` if stack outputs are not yet populated.
-    *   Compiles Vite, injecting these variables dynamically at build-time.
-    *   Syncs the `/dist` directory to the target S3 bucket using `aws s3 sync` and deletes stale files.
+    - Queries CloudFormation stack outputs using the AWS CLI for the active stack (accepts an optional first command-line argument like `chat-staging` to specify the target environment, defaulting to `chat`).
+    - Retrieves the active `ApiUrl`, `FrontendBucket`, `UserPoolId`, and `UserPoolClientId`.
+    - Falls back to your custom S3 bucket name `chat-hari31416` if stack outputs are not yet populated.
+    - Compiles Vite, injecting these variables dynamically at build-time.
+    - Syncs the `/dist` directory to the target S3 bucket using `aws s3 sync` and deletes stale files.
 
 ---
 
@@ -63,7 +63,9 @@ We have automated the deployment pipeline using modular shell scripts and a root
 You can deploy the frontend to various target environments by running the orchestration scripts.
 
 ### Deploying to Production (Default "chat" stack)
+
 Using the root **`Makefile`**, you can deploy changes to your production stack immediately:
+
 ```bash
 # 1. Create S3 Bucket configuration (First-time only)
 make create-bucket
@@ -71,13 +73,17 @@ make create-bucket
 # 2. Compile and upload default production stack
 make deploy-frontend
 ```
+
 Or directly call the shell script:
+
 ```bash
 ./deploy-frontend.sh
 ```
 
 ### Deploying to Staging (Separate "chat-staging" stack)
+
 If you have deployed a separate staging stack (`chat-staging`) using Option C, compile and sync specifically to the staging S3 bucket:
+
 ```bash
 ./deploy-frontend.sh chat-staging
 ```

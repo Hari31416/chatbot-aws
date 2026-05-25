@@ -18,6 +18,7 @@
 ## 1. What This Project Does
 
 A **serverless-ready chatbot API** that:
+
 - Accepts text messages and replies using an LLM (via LiteLLM).
 - Accepts image uploads with optional text prompts and replies with vision-capable models.
 - Persists conversation history in DynamoDB (with automatic TTL expiry).
@@ -49,13 +50,13 @@ AWS Lambda (FastAPI + Mangum adapter)
 
 ### AWS Services Used (All Free-Tier Eligible)
 
-| Service | Purpose | Free Tier |
-|---|---|---|
-| **API Gateway HTTP API** | HTTPS entrypoint, routes requests to Lambda | 1M req/month |
-| **AWS Lambda (arm64)** | Runs FastAPI serverlessly | 1M req + 400K GB-sec/month |
-| **DynamoDB (PAY_PER_REQUEST)** | Conversation & context storage with TTL | 25 GB storage |
-| **S3** | Private image attachment storage | 5 GB |
-| **SSM Parameter Store** | Encrypted API key storage | 10K standard params |
+| Service                        | Purpose                                     | Free Tier                  |
+| ------------------------------ | ------------------------------------------- | -------------------------- |
+| **API Gateway HTTP API**       | HTTPS entrypoint, routes requests to Lambda | 1M req/month               |
+| **AWS Lambda (arm64)**         | Runs FastAPI serverlessly                   | 1M req + 400K GB-sec/month |
+| **DynamoDB (PAY_PER_REQUEST)** | Conversation & context storage with TTL     | 25 GB storage              |
+| **S3**                         | Private image attachment storage            | 5 GB                       |
+| **SSM Parameter Store**        | Encrypted API key storage                   | 10K standard params        |
 
 ---
 
@@ -135,6 +136,7 @@ class Settings(BaseSettings):
 ### `dependencies.py` — Dependency Injection
 
 Provides singletons injected into route handlers:
+
 - `get_settings()` — cached Pydantic settings
 - `get_dynamodb_table()` — cached boto3 DynamoDB table resource
 - `get_s3_client()` — cached boto3 S3 client (supports path-style for local Minio)
@@ -149,11 +151,11 @@ Provides singletons injected into route handlers:
 
 Uses a **single-table design** with a composite key:
 
-| Item Type | `pk` | `sk` |
-|---|---|---|
-| Conversation metadata | `CONV#<id>` | `META` |
-| User/assistant message | `CONV#<id>` | `MSG#<timestamp>#<message_id>` |
-| Conversation context (TTL) | `CONV#<id>` | `CTX` |
+| Item Type                  | `pk`        | `sk`                           |
+| -------------------------- | ----------- | ------------------------------ |
+| Conversation metadata      | `CONV#<id>` | `META`                         |
+| User/assistant message     | `CONV#<id>` | `MSG#<timestamp>#<message_id>` |
+| Conversation context (TTL) | `CONV#<id>` | `CTX`                          |
 
 The `CTX` item stores the last N messages as a JSON list and has a `ttl` attribute (Unix epoch) for automatic DynamoDB TTL expiry — it disappears after `CONTEXT_TTL_SECONDS` (default 1 hour).
 
@@ -244,17 +246,17 @@ MAX_HISTORY_MESSAGES=10
 
 ### AWS Lambda (set via `template.yaml` → CloudFormation)
 
-| Variable | Source | Value |
-|---|---|---|
-| `DYNAMODB_TABLE_NAME` | CloudFormation ref | `chatbot-table-prod` |
-| `S3_BUCKET_NAME` | CloudFormation ref | `chatbot-uploads-<AccountId>-prod` |
-| `LITELLM_MODEL` | CloudFormation param | `openai/gpt-oss-120b` |
-| `LITELLM_BASE_URL` | CloudFormation param | `https://integrate.api.nvidia.com/v1` |
-| `LITELLM_VISION_MODEL` | CloudFormation param | `gemini/gemini-3.1-flash-lite` |
-| `CONTEXT_TTL_SECONDS` | CloudFormation param | `3600` |
-| `MAX_HISTORY_MESSAGES` | Hardcoded | `10` |
-| `LITELLM_API_KEY_PARAMETER` | Hardcoded | `/chatbot/litellm_api_key` |
-| `LITELLM_VISION_API_KEY_PARAMETER` | Hardcoded | `/chatbot/litellm_vision_api_key` |
+| Variable                           | Source               | Value                                 |
+| ---------------------------------- | -------------------- | ------------------------------------- |
+| `DYNAMODB_TABLE_NAME`              | CloudFormation ref   | `chatbot-table-prod`                  |
+| `S3_BUCKET_NAME`                   | CloudFormation ref   | `chatbot-uploads-<AccountId>-prod`    |
+| `LITELLM_MODEL`                    | CloudFormation param | `openai/gpt-oss-120b`                 |
+| `LITELLM_BASE_URL`                 | CloudFormation param | `https://integrate.api.nvidia.com/v1` |
+| `LITELLM_VISION_MODEL`             | CloudFormation param | `gemini/gemini-3.1-flash-lite`        |
+| `CONTEXT_TTL_SECONDS`              | CloudFormation param | `3600`                                |
+| `MAX_HISTORY_MESSAGES`             | Hardcoded            | `10`                                  |
+| `LITELLM_API_KEY_PARAMETER`        | Hardcoded            | `/chatbot/litellm_api_key`            |
+| `LITELLM_VISION_API_KEY_PARAMETER` | Hardcoded            | `/chatbot/litellm_vision_api_key`     |
 
 > **Note**: `LITELLM_API_KEY` and `LITELLM_VISION_API_KEY` are NOT passed directly. Instead, `LITELLM_API_KEY_PARAMETER` and `LITELLM_VISION_API_KEY_PARAMETER` point to their respective SSM paths, and the application resolves and decrypts them at cold start via `get_ssm_parameter()`.
 
@@ -417,14 +419,14 @@ class ChatResponse(BaseModel):
 
 ### SAM Template Fixes During Deployment
 
-| Error | Root Cause | Fix |
-|---|---|---|
-| `BinaryMediaTypes not defined` | `AWS::Serverless::HttpApi` (HTTP API v2) does not support this property — only REST API v1 does. HTTP API handles binary payloads natively. | Removed the `BinaryMediaTypes` block entirely. |
-| `Reserved key AWS_REGION` | Lambda automatically sets `AWS_REGION` as a built-in runtime variable. Re-declaring it in `Environment.Variables` causes a 400 error from Lambda's API. | Removed `AWS_REGION: !Ref AWS::Region` from the template — boto3 picks it up from the built-in runtime variable automatically. |
-| `ROLLBACK_COMPLETE state` | When a stack fails its first-ever creation, CloudFormation rolls it back but leaves a dead shell. This shell cannot be updated — only deleted and recreated. | `aws cloudformation delete-stack --stack-name <name>` then `sam deploy` again. |
-| `S3 Bucket does not exist` | The SAM-managed CloudFormation stack (`aws-sam-cli-managed-default`) was deleted, but `samconfig.toml` still referenced the old managed S3 bucket. | `aws cloudformation delete-stack --stack-name aws-sam-cli-managed-default` then `sam deploy --guided` to recreate. |
-| `pip editable install error` | `uv export` by default includes the local project as an editable install (`file:///tmp/...`), which pip inside the SAM Docker container cannot hash or resolve. | `uv export --format requirements-txt --no-hashes --no-emit-project -o requirements.txt` |
-| Cross-architecture warning | Building an `x86_64` Lambda image on an Apple Silicon (`arm64`) host causes Docker to emulate x86, which is slow and fragile. | Added `Architectures: [arm64]` to `Globals.Function` in `template.yaml`. Lambda Graviton (arm64) is also 20% cheaper and faster. |
+| Error                          | Root Cause                                                                                                                                                      | Fix                                                                                                                              |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `BinaryMediaTypes not defined` | `AWS::Serverless::HttpApi` (HTTP API v2) does not support this property — only REST API v1 does. HTTP API handles binary payloads natively.                     | Removed the `BinaryMediaTypes` block entirely.                                                                                   |
+| `Reserved key AWS_REGION`      | Lambda automatically sets `AWS_REGION` as a built-in runtime variable. Re-declaring it in `Environment.Variables` causes a 400 error from Lambda's API.         | Removed `AWS_REGION: !Ref AWS::Region` from the template — boto3 picks it up from the built-in runtime variable automatically.   |
+| `ROLLBACK_COMPLETE state`      | When a stack fails its first-ever creation, CloudFormation rolls it back but leaves a dead shell. This shell cannot be updated — only deleted and recreated.    | `aws cloudformation delete-stack --stack-name <name>` then `sam deploy` again.                                                   |
+| `S3 Bucket does not exist`     | The SAM-managed CloudFormation stack (`aws-sam-cli-managed-default`) was deleted, but `samconfig.toml` still referenced the old managed S3 bucket.              | `aws cloudformation delete-stack --stack-name aws-sam-cli-managed-default` then `sam deploy --guided` to recreate.               |
+| `pip editable install error`   | `uv export` by default includes the local project as an editable install (`file:///tmp/...`), which pip inside the SAM Docker container cannot hash or resolve. | `uv export --format requirements-txt --no-hashes --no-emit-project -o requirements.txt`                                          |
+| Cross-architecture warning     | Building an `x86_64` Lambda image on an Apple Silicon (`arm64`) host causes Docker to emulate x86, which is slow and fragile.                                   | Added `Architectures: [arm64]` to `Globals.Function` in `template.yaml`. Lambda Graviton (arm64) is also 20% cheaper and faster. |
 
 ---
 
@@ -483,6 +485,7 @@ curl https://ltr80pcnvd.execute-api.ap-south-1.amazonaws.com/health
 ## 8. Managing Secrets
 
 ### View the current LiteLLM API keys
+
 ```bash
 # Standard key
 aws ssm get-parameter --name "/chatbot/litellm_api_key" --with-decryption
@@ -492,6 +495,7 @@ aws ssm get-parameter --name "/chatbot/litellm_vision_api_key" --with-decryption
 ```
 
 ### Update the LiteLLM API keys
+
 ```bash
 # Standard key
 aws ssm put-parameter \
@@ -525,6 +529,7 @@ Health check. Returns `{"status": "ok"}`.
 Send a text message.
 
 **Request Body (JSON)**:
+
 ```json
 {
   "message": "What is the capital of France?",
@@ -534,6 +539,7 @@ Send a text message.
 ```
 
 **Success Response**:
+
 ```json
 {
   "conversation_id": "uuid",
@@ -546,6 +552,7 @@ Send a text message.
 ```
 
 **Error Response** (e.g., LLM API failure):
+
 ```json
 {
   "conversation_id": "uuid-or-unknown",
@@ -561,12 +568,14 @@ Send a text message.
 Send an image (with optional text prompt).
 
 **Request**: `multipart/form-data`
+
 - `file` — image file (PNG, JPEG, or WebP, max 5MB)
 - `message` — optional text prompt
 - `conversation_id` — optional
 - `user_id` — optional
 
 **Success Response**:
+
 ```json
 {
   "conversation_id": "uuid",

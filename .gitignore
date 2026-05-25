@@ -4,3 +4,5 @@ samconfig.toml
 .venv
 __pycache__
 .pytest_cache
+.env.local
+.env.development

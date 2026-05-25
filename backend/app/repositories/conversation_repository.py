@@ -155,7 +155,7 @@ class ConversationRepository:
     def get_user_conversations(self, user_id: str) -> list[dict]:
         logger.debug("get_user_conversations user_id=%s", user_id)
         response = self._table.query(
-            IndexName="UserConversationsIndex",
+            IndexName="UserConversationsIndexV2",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("sk").eq("META"),
         )
         items = response.get("Items", [])

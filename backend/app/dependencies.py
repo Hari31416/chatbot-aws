@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.request
 from functools import lru_cache
 from typing import Any, cast
@@ -169,13 +170,27 @@ def get_rag_service(
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
+# Cache dictionary mapping JWKS URL to (keys_dict, expiry_timestamp)
+_jwks_cache: dict[str, tuple[dict, float]] = {}
+
+
 def get_jwks(jwks_url: str) -> dict:
+    now = time.time()
+    if jwks_url in _jwks_cache:
+        cached_val, expiry = _jwks_cache[jwks_url]
+        if now < expiry:
+            return cached_val
     try:
         with urllib.request.urlopen(jwks_url, timeout=5) as response:
-            return json.loads(response.read().decode("utf-8"))
+            data = json.loads(response.read().decode("utf-8"))
+            # Cache keys for 1 hour (3600 seconds)
+            _jwks_cache[jwks_url] = (data, now + 3600)
+            return data
     except Exception as e:
         logger.warning("Failed to fetch JWKS from %s: %s", jwks_url, e)
+        # If fetch fails but we have an expired cache entry, return it as fallback
+        if jwks_url in _jwks_cache:
+            return _jwks_cache[jwks_url][0]
         return {"keys": []}
 
 

@@ -98,20 +98,21 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - s3vectors:CreateVectorBucket
-                - s3vectors:CreateIndex
                 - s3vectors:PutVectors
                 - s3vectors:QueryVectors
                 - s3vectors:GetVectors
                 - s3vectors:ListIndexes
+              Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
+            - Effect: Allow
+              Action:
                 - s3vectors:ListVectorBuckets
-              Resource: "*"
+              Resource: "*" # Required — no resource-level support for bucket listing
             - Effect: Allow
               Action:
                 - textract:DetectDocumentText
                 - textract:StartDocumentTextDetection
                 - textract:GetDocumentTextDetection
-              Resource: "*"
+              Resource: "*" # Textract does not support resource-level ARNs
       Environment:
         Variables:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
@@ -217,14 +218,19 @@ Resources:
         - AttributeName: sk
           KeyType: RANGE
       GlobalSecondaryIndexes:
-        - IndexName: UserConversationsIndex
+        - IndexName: UserConversationsIndexV2
           KeySchema:
             - AttributeName: user_id
               KeyType: HASH
             - AttributeName: sk
               KeyType: RANGE
           Projection:
-            ProjectionType: ALL
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - conversation_id
+              - name
+              - created_at
+              - updated_at
           ProvisionedThroughput:
             ReadCapacityUnits: 5
             WriteCapacityUnits: 5

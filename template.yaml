@@ -59,8 +59,8 @@ Globals:
         LITELLM_EMBEDDING_MODEL: !Ref LiteLlmEmbeddingModel
         LITELLM_VISION_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
         LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
-        S3_VECTOR_BUCKET_NAME: !Ref S3VectorBucketName
-        S3_VECTOR_INDEX_NAME: !Ref S3VectorIndexName
+        S3_VECTOR_BUCKET_NAME: !Ref ChatbotVectorBucket
+        S3_VECTOR_INDEX_NAME: !Ref ChatbotVectorIndex
         EMBEDDING_DIMENSION: 768
         RAG_TOP_K: 3
         RAG_CHUNK_SIZE: 800
@@ -314,6 +314,32 @@ Resources:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
         - ALLOW_USER_SRP_AUTH
+
+  # -------------------------------------------------------------
+  # Amazon S3 Vectors Vector Bucket
+  # -------------------------------------------------------------
+  ChatbotVectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      VectorBucketName: !Ref S3VectorBucketName
+      EncryptionConfiguration:
+        SseType: "AES256"
+
+  # -------------------------------------------------------------
+  # Amazon S3 Vectors Index
+  # -------------------------------------------------------------
+  ChatbotVectorIndex:
+    Type: AWS::S3Vectors::Index
+    DependsOn: ChatbotVectorBucket
+    Properties:
+      IndexName: !Ref S3VectorIndexName
+      VectorBucketName: !Ref S3VectorBucketName
+      DataType: "float32"
+      Dimension: 768
+      DistanceMetric: "cosine"
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - "text"
 
 Outputs:
   ApiUrl:

@@ -23,7 +23,7 @@ In our current synchronous setup, the frontend sends a prompt, and the backend w
 
 #### Current Setup (Synchronous Buffer)
 
-```
+```txt
 [React Frontend] --- (POST /chat) ---> [API Gateway HTTP API] ---> [FastAPI + Mangum]
                                                                         |
                                                                   (Await completion)
@@ -85,10 +85,6 @@ ChatbotBackendFunction:
       # instead of configuring it here. This avoids duplicate CORS headers
       # (e.g. Access-Control-Allow-Origin) which would cause the browser to block calls.
 ```
-
-````
-
----
 
 ## 3. Backend Changes (FastAPI)
 
@@ -179,7 +175,7 @@ async def chat_stream(
             yield f"data: {json.dumps({'error': 'Stream generation interrupted', 'details': str(e)})}\n\n"
 
     return StreamingResponse(token_generator(), media_type="text/event-stream")
-````
+```
 
 ---
 

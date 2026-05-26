@@ -69,6 +69,7 @@ class ChatResponse(BaseModel):
 
 class ChatImageResponse(ChatResponse):
     attachment: Attachment | None = None
+    attachments: list[Attachment] | None = None
 
 
 class ConversationResponse(BaseModel):
@@ -85,6 +86,7 @@ class MessageResponse(BaseModel):
     content: str
     created_at: str
     attachment: Attachment | None = None
+    attachments: list[Attachment] | None = None
 
 
 class UpdateConversationRequest(BaseModel):

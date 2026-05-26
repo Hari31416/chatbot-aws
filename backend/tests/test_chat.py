@@ -69,3 +69,23 @@ def test_chat_stream(test_client: TestClient) -> None:
 
     # Parse last chunk
     assert non_empty_lines[3] == "data: [DONE]"
+
+
+def test_chat_multi_image_upload(test_client: TestClient) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\n"
+    response = test_client.post(
+        "/chat/image",
+        data={"message": "Describe these two images"},
+        files=[
+            ("files", ("image1.png", image_bytes, "image/png")),
+            ("files", ("image2.png", image_bytes, "image/png")),
+        ],
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["assistant_message"] == "stubbed response"
+    assert len(payload["attachments"]) == 2
+    assert payload["attachments"][0]["mime_type"] == "image/png"
+    assert payload["attachments"][1]["mime_type"] == "image/png"
+    assert "http://mock-s3-presigned-url/" in payload["attachments"][0]["presigned_url"]
+    assert "http://mock-s3-presigned-url/" in payload["attachments"][1]["presigned_url"]

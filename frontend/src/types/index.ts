@@ -11,6 +11,7 @@ export interface Message {
   content: string;
   created_at: string;
   attachment?: Attachment | null;
+  attachments?: Attachment[] | null;
   error?: string | null;
 }
 
@@ -38,6 +39,7 @@ export interface ChatResponse {
   created_at?: string | null;
   error?: string | null;
   attachment?: Attachment | null;
+  attachments?: Attachment[] | null;
 }
 
 export interface RagDocument {

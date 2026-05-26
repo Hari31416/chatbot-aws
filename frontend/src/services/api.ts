@@ -99,7 +99,7 @@ export async function sendTextMessage(
  * Sends an image-based chat request to POST /chat/image
  */
 export async function sendImageMessage(
-  file: File,
+  fileOrFiles: File | File[],
   message: string | null,
   conversationId: string | null,
   userId: string | null,
@@ -107,7 +107,13 @@ export async function sendImageMessage(
 ): Promise<ChatResponse> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
   const formData = new FormData();
-  formData.append("file", file);
+  if (Array.isArray(fileOrFiles)) {
+    fileOrFiles.forEach((file) => {
+      formData.append("files", file);
+    });
+  } else {
+    formData.append("file", fileOrFiles);
+  }
   if (message) {
     formData.append("message", message);
   }

@@ -344,7 +344,8 @@ async def chat_stream(
 
 @router.post("/chat/image", response_model=ChatImageResponse)
 async def chat_image(
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    files: list[UploadFile] = File([]),
     message: str | None = Form(None),
     conversation_id: str | None = Form(None),
     repo=Depends(get_repository),
@@ -354,41 +355,85 @@ async def chat_image(
     user_id: str = Depends(get_current_user_id),
 ) -> ChatImageResponse:
     try:
-        if file.content_type not in settings.allowed_image_mime_types:
-            logger.warning(
-                "chat_image rejected unsupported mime_type=%s", file.content_type
-            )
+        all_files = []
+        if file:
+            all_files.append(file)
+        if files:
+            all_files.extend(files)
+
+        if not all_files:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unsupported image type",
-            )
-        data = await file.read()
-        if not data:
-            logger.warning("chat_image received empty upload")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Empty upload",
-            )
-        if len(data) > settings.max_image_bytes:
-            logger.warning(
-                "chat_image image too large size=%d max=%d",
-                len(data),
-                settings.max_image_bytes,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="Image exceeds max size",
+                detail="No image files uploaded",
             )
 
         resolved_conversation_id = conversation_id or str(uuid4())
+        user_message_id = str(uuid4())
+        created_at = utcnow_iso()
+
+        attachments = []
+        image_data_urls = []
+
+        for idx, upload_file in enumerate(all_files):
+            if upload_file.content_type not in settings.allowed_image_mime_types:
+                logger.warning(
+                    "chat_image rejected unsupported mime_type=%s index=%d",
+                    upload_file.content_type,
+                    idx,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unsupported image type: {upload_file.filename}",
+                )
+
+            data = await upload_file.read()
+            if not data:
+                logger.warning("chat_image received empty upload index=%d", idx)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Empty upload: {upload_file.filename}",
+                )
+
+            if len(data) > settings.max_image_bytes:
+                logger.warning(
+                    "chat_image image too large size=%d max=%d index=%d",
+                    len(data),
+                    settings.max_image_bytes,
+                    idx,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Image exceeds max size: {upload_file.filename}",
+                )
+
+            extension = extension_for_mime(upload_file.content_type)
+            suffix = f"_{idx}" if len(all_files) > 1 else ""
+            s3_key = build_image_key(resolved_conversation_id, f"{user_message_id}{suffix}", extension)
+            upload_result = await to_thread.run_sync(
+                storage.upload_image,
+                s3_key,
+                data,
+                upload_file.content_type,
+            )
+
+            presigned_url = storage.generate_presigned_url(s3_key)
+            attachment_dict = asdict(upload_result)
+            attachment_dict["presigned_url"] = presigned_url
+
+            attachments.append(Attachment(**attachment_dict))
+
+            data_url = (
+                f"data:{upload_file.content_type};base64,{base64.b64encode(data).decode('ascii')}"
+            )
+            image_data_urls.append(data_url)
+
         logger.info(
-            "chat_image request conversation_id=%s user_id=%s mime_type=%s size=%d",
+            "chat_image request conversation_id=%s user_id=%s files_count=%d",
             resolved_conversation_id,
             user_id,
-            file.content_type,
-            len(data),
+            len(all_files),
         )
-        created_at = utcnow_iso()
+
         # Set dynamic conversation name based on first message (up to 30 chars) or default
         conv_name = message[:30] if message else "Image Chat"
         if message and len(message) > 30:
@@ -402,15 +447,8 @@ async def chat_image(
             conv_name,
         )
 
-        user_message_id = str(uuid4())
-        extension = extension_for_mime(file.content_type)
-        s3_key = build_image_key(resolved_conversation_id, user_message_id, extension)
-        upload_result = await to_thread.run_sync(
-            storage.upload_image,
-            s3_key,
-            data,
-            file.content_type,
-        )
+        attachment_dict_legacy = attachments[0].model_dump() if attachments else None
+        attachments_list = [a.model_dump() for a in attachments]
 
         await to_thread.run_sync(
             repo.put_message,
@@ -419,18 +457,16 @@ async def chat_image(
             "user",
             message or "",
             created_at,
-            asdict(upload_result),
+            attachment_dict_legacy,
             user_id,
+            attachments_list,
         )
 
         history = await _load_history(
             repo, resolved_conversation_id, settings.max_history_messages
         )
-        data_url = (
-            f"data:{file.content_type};base64,{base64.b64encode(data).decode('ascii')}"
-        )
         messages = build_history_messages(history)
-        user_content = build_user_content(message, data_url)
+        user_content = build_user_content(message, image_data_urls=image_data_urls)
         messages.append({"role": "user", "content": user_content})
 
         assistant_text = await llm.generate(messages)
@@ -453,7 +489,7 @@ async def chat_image(
             None,
         )
 
-        context_text = message or "[image]"
+        context_text = message or "[images]"
         await _update_context(
             repo,
             resolved_conversation_id,
@@ -464,16 +500,11 @@ async def chat_image(
             assistant_text,
         )
 
-        presigned_url = storage.generate_presigned_url(s3_key)
-        attachment_dict = asdict(upload_result)
-        attachment_dict["presigned_url"] = presigned_url
-
         logger.info(
-            "chat_image complete conversation_id=%s user_message_id=%s assistant_message_id=%s s3_key=%s",
+            "chat_image complete conversation_id=%s user_message_id=%s assistant_message_id=%s",
             resolved_conversation_id,
             user_message_id,
             assistant_message_id,
-            s3_key,
         )
         return ChatImageResponse(
             conversation_id=resolved_conversation_id,
@@ -481,7 +512,8 @@ async def chat_image(
             assistant_message_id=assistant_message_id,
             assistant_message=assistant_text,
             created_at=assistant_created_at,
-            attachment=Attachment(**attachment_dict),
+            attachment=attachments[0] if attachments else None,
+            attachments=attachments,
         )
     except Exception as e:
         error_msg = str(e)
@@ -701,6 +733,25 @@ async def get_conversation_messages(
                 size_bytes=attachment_data.get("size_bytes"),
                 presigned_url=presigned_url,
             )
+
+        attachments_data = item.get("attachments")
+        attachments = None
+        if attachments_data:
+            attachments = []
+            for att in attachments_data:
+                s3_key = att.get("s3_key")
+                presigned_url = None
+                if s3_key:
+                    presigned_url = storage.generate_presigned_url(s3_key)
+                attachments.append(
+                    Attachment(
+                        s3_key=s3_key,
+                        mime_type=att.get("mime_type"),
+                        size_bytes=att.get("size_bytes"),
+                        presigned_url=presigned_url,
+                    )
+                )
+
         messages.append(
             MessageResponse(
                 id=item.get("message_id") or item.get("sk", "").split("#")[-1],
@@ -708,6 +759,7 @@ async def get_conversation_messages(
                 content=item.get("content"),
                 created_at=item.get("created_at"),
                 attachment=attachment,
+                attachments=attachments,
             )
         )
     return messages

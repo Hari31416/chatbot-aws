@@ -78,6 +78,7 @@ class ConversationRepository:
         created_at: str,
         attachment: dict | None = None,
         user_id: str | None = None,
+        attachments: list[dict] | None = None,
     ) -> None:
         logger.debug(
             "put_message conversation_id=%s message_id=%s role=%s",
@@ -95,6 +96,8 @@ class ConversationRepository:
         }
         if attachment:
             item["attachment"] = attachment
+        if attachments:
+            item["attachments"] = attachments
         if user_id:
             item["user_id"] = user_id
         self._table.put_item(Item=item)

@@ -79,6 +79,7 @@ class InMemoryConversationRepository:
         created_at: str,
         attachment: dict | None = None,
         user_id: str | None = None,
+        attachments: list[dict] | None = None,
     ) -> None:
         self._messages.setdefault(conversation_id, []).append(
             {
@@ -87,6 +88,7 @@ class InMemoryConversationRepository:
                 "content": content,
                 "created_at": created_at,
                 "attachment": attachment,
+                "attachments": attachments,
                 "user_id": user_id,
             }
         )

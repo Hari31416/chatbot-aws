@@ -357,20 +357,41 @@ export function ChatFeed({
                       : "bg-white border border-zinc-200 text-zinc-900 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
                   }`}
                 >
-                  {/* Presigned image attachment */}
-                  {msg.attachment && (
-                    <div className="mb-2 max-w-xs overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
-                      <img
-                        src={msg.attachment.presigned_url || ""}
-                        alt="Attached file"
-                        onClick={() =>
-                          setLightboxImage(
-                            msg.attachment?.presigned_url || null,
-                          )
-                        }
-                        className="w-full max-h-40 object-cover cursor-zoom-in hover:opacity-90"
-                      />
+                  {/* Presigned image attachments */}
+                  {msg.attachments && msg.attachments.length > 0 ? (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {msg.attachments.map((att, idx) => (
+                        <div
+                          key={att.s3_key || idx}
+                          className="max-w-[180px] overflow-hidden rounded-lg border border-black/10 dark:border-white/10 shrink-0"
+                        >
+                          <img
+                            src={att.presigned_url || ""}
+                            alt="Attached file"
+                            onClick={() =>
+                              setLightboxImage(att.presigned_url || null)
+                            }
+                            className="w-full max-h-36 object-cover cursor-zoom-in hover:opacity-90"
+                          />
+                        </div>
+                      ))}
                     </div>
+                  ) : (
+                    /* Legacy single attachment fallback */
+                    msg.attachment && (
+                      <div className="mb-2 max-w-xs overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
+                        <img
+                          src={msg.attachment.presigned_url || ""}
+                          alt="Attached file"
+                          onClick={() =>
+                            setLightboxImage(
+                              msg.attachment?.presigned_url || null,
+                            )
+                          }
+                          className="w-full max-h-40 object-cover cursor-zoom-in hover:opacity-90"
+                        />
+                      </div>
+                    )
                   )}
 
                   {/* Content Render */}

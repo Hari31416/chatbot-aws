@@ -90,10 +90,8 @@ export function App() {
 
   const [inputText, setInputText] = React.useState("");
   const [isStreaming, setIsStreaming] = React.useState(false);
-  const [selectedImage, setSelectedImage] = React.useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(
-    null,
-  );
+  const [selectedImages, setSelectedImages] = React.useState<File[]>([]);
+  const [imagePreviewUrls, setImagePreviewUrls] = React.useState<string[]>([]);
   const [useRag, setUseRag] = React.useState(false);
   const [ragDocumentsText, setRagDocumentsText] = React.useState("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -299,16 +297,16 @@ export function App() {
   const sendMutation = useMutation({
     mutationFn: async ({
       text,
-      imageFile,
+      imageFiles,
       convId,
     }: {
       text: string;
-      imageFile: File | null;
+      imageFiles: File[];
       convId: string;
     }) => {
-      if (imageFile) {
+      if (imageFiles.length > 0) {
         return sendImageMessage(
-          imageFile,
+          imageFiles,
           text || null,
           convId,
           userId,
@@ -333,6 +331,7 @@ export function App() {
         content: assistantText,
         created_at: data.created_at || new Date().toISOString(),
         attachment: data.attachment,
+        attachments: data.attachments,
       };
 
       setMessages((prev) => {
@@ -343,6 +342,7 @@ export function App() {
               ...m,
               id: data.user_message_id || m.id,
               attachment: data.attachment || m.attachment,
+              attachments: data.attachments || m.attachments,
             };
           }
           return m;
@@ -431,47 +431,62 @@ export function App() {
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 5242880) {
-      toast({
-        title: "File Too Large",
-        description: "Maximum image size allowed is 5 MB.",
-        type: "error",
-      });
-      return;
-    }
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     const allowedTypes = ["image/png", "image/jpeg", "image/webp"];
-    if (!allowedTypes.includes(file.type)) {
-      toast({
-        title: "Unsupported Format",
-        description: "PNG, JPEG, and WebP formats are supported.",
-        type: "error",
-      });
-      return;
+    const validFiles: File[] = [];
+    const validUrls: string[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.size > 5242880) {
+        toast({
+          title: "File Too Large",
+          description: `${file.name} exceeds the maximum 5 MB limit.`,
+          type: "error",
+        });
+        continue;
+      }
+      if (!allowedTypes.includes(file.type)) {
+        toast({
+          title: "Unsupported Format",
+          description: `${file.name} format is not supported (PNG, JPEG, and WebP are supported).`,
+          type: "error",
+        });
+        continue;
+      }
+      validFiles.push(file);
+      validUrls.push(URL.createObjectURL(file));
     }
 
-    setSelectedImage(file);
-    const url = URL.createObjectURL(file);
-    setImagePreviewUrl(url);
+    if (validFiles.length > 0) {
+      setSelectedImages((prev) => [...prev, ...validFiles]);
+      setImagePreviewUrls((prev) => [...prev, ...validUrls]);
+    }
   };
 
-  const handleRemoveImage = () => {
-    setSelectedImage(null);
-    if (imagePreviewUrl) {
-      URL.revokeObjectURL(imagePreviewUrl);
-      setImagePreviewUrl(null);
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+  const handleRemoveImage = (index?: number) => {
+    if (typeof index === "number") {
+      const urlToRevoke = imagePreviewUrls[index];
+      if (urlToRevoke) {
+        URL.revokeObjectURL(urlToRevoke);
+      }
+      setSelectedImages((prev) => prev.filter((_, i) => i !== index));
+      setImagePreviewUrls((prev) => prev.filter((_, i) => i !== index));
+    } else {
+      imagePreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+      setSelectedImages([]);
+      setImagePreviewUrls([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() && !selectedImage) return;
+    if (!inputText.trim() && selectedImages.length === 0) return;
 
     let currentConvId = activeConversationId;
     if (!currentConvId) {
@@ -493,14 +508,24 @@ export function App() {
       role: "user",
       content: inputText.trim(),
       created_at: new Date().toISOString(),
-      attachment: selectedImage
-        ? {
-            s3_key: "",
-            mime_type: selectedImage.type,
-            size_bytes: selectedImage.size,
-            presigned_url: imagePreviewUrl,
-          }
-        : null,
+      attachment:
+        selectedImages.length > 0
+          ? {
+              s3_key: "",
+              mime_type: selectedImages[0].type,
+              size_bytes: selectedImages[0].size,
+              presigned_url: imagePreviewUrls[0],
+            }
+          : null,
+      attachments:
+        selectedImages.length > 0
+          ? selectedImages.map((img, i) => ({
+              s3_key: "",
+              mime_type: img.type,
+              size_bytes: img.size,
+              presigned_url: imagePreviewUrls[i],
+            }))
+          : null,
     };
 
     setMessages((prev) => {
@@ -516,10 +541,10 @@ export function App() {
       .map((item) => item.trim())
       .filter(Boolean);
 
-    if (selectedImage) {
+    if (selectedImages.length > 0) {
       sendMutation.mutate({
         text: inputText.trim(),
-        imageFile: selectedImage,
+        imageFiles: selectedImages,
         convId: currentConvId,
       });
     } else {
@@ -634,8 +659,8 @@ export function App() {
     }
 
     setInputText("");
-    setSelectedImage(null);
-    setImagePreviewUrl(null);
+    setSelectedImages([]);
+    setImagePreviewUrls([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -739,8 +764,8 @@ export function App() {
         <InputBar
           inputText={inputText}
           setInputText={setInputText}
-          selectedImage={selectedImage}
-          imagePreviewUrl={imagePreviewUrl}
+          selectedImages={selectedImages}
+          imagePreviewUrls={imagePreviewUrls}
           handleSendMessage={handleSendMessage}
           handleImageChange={handleImageChange}
           handleRemoveImage={handleRemoveImage}

@@ -17,6 +17,15 @@ The entire platform is built with a serverless-first philosophy, ensuring high s
 - **Amazon SQS Ingestion Queue** handles background document processing. When a document is uploaded, it lands in the staging area of a private S3 bucket. This triggers an S3 Event Notification to SQS, decoupling the ingestion workload from the API request lifecycle.
 - **Asynchronous Ingestion Worker** is an isolated Lambda function triggered by SQS. It downloads files, processes multi-page binaries using AWS Textract, splits and chunks text, computes embeddings via LiteLLM, indexes them in a native **Amazon S3 Vectors** store, and updates the document status in DynamoDB.
 
+### System Architecture Diagrams
+
+To understand the system structure and processing workflows, refer to the diagrams below:
+
+#### High-Level System Architecture
+![High-Level RAG AWS Architecture](images/rag_aws_architecture.png)
+
+### Logical Request and Data Flow (Interactive Visualization)
+
 ```mermaid
 graph TD
     Client["Client (Vite React SPA on S3)"]

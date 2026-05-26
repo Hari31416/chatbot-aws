@@ -35,3 +35,12 @@ As mentioned earlier, your 1 TB of outbound data transfer is perfectly free.
 
 - **The Trap:** Passing documents to `AnalyzeDocument` (for structured data like tables and forms) costs up to **$50 per 1,000 pages** after your 3-month trial ends, whereas raw OCR text extraction (`DetectDocumentText`) is only **$1.50 per 1,000 pages**. Running a heavy integration script or continuous cron job over large PDF libraries using structural analysis will melt through your $100 credit within hours.
 - **The Fix:** Only invoke the heavy `Analyze` block if you strictly need form or table parsing; otherwise, default your pipelines to standard text detection.
+
+## 7. Amazon SQS Free Tier & Visibility Timeouts
+
+Amazon SQS is highly cost-effective and integrates with the AWS **Always Free** tier.
+
+- **The Trap:** AWS SQS offers **1 million free requests** per month. However, if your application has a polling loop or if your Ingestion Worker Lambda processes a document slower than the SQS queue's `VisibilityTimeout`, the message will reappear in the queue and trigger another worker invocation. This "visibility loop" can lead to duplicate processing, double LLM bills, and database conflicts, and can multiply SQS requests rapidly if a toxic message keeps failing and retrying endlessly.
+- **The Fix:** 
+  1. Always set up a **Dead Letter Queue (DLQ)** with a reasonable retry threshold (`maxReceiveCount: 3`) so failing, "poison" messages are automatically quarantined rather than looping forever.
+  2. Ensure your queue's `VisibilityTimeout` is set to at least **1.5x to 3x** your worker Lambda's timeout. In this project, the worker timeout is 120s, and the SQS visibility timeout is 180s.

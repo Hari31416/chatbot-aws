@@ -38,13 +38,40 @@ When a user interacts with this chatbot, their request flows through these servi
                                              ▼                     ▼
                                      Amazon S3 Vectors       Amazon Textract
                                    (Vector RAG Database)    (PDF Layout parsing)
+
+[ EVENT-DRIVEN ASYNCHRONOUS DOCUMENT INGESTION (RAG) ]
+5. User Browser ──────(Uploads Document)───────► Amazon API Gateway (Verifies Cognito JWT Token)
+                                                        │
+                                                        ▼
+                                                  AWS Lambda (Compute Backend runs FastAPI)
+                                                        │
+                                                        ▼
+                                                  Amazon S3 Uploads (prefix: staging/)
+                                                        │
+                                                  (S3 Event Notification)
+                                                        │
+                                                        ▼
+                                                  Amazon SQS Ingestion Queue (Buffers Job)
+                                                        │
+                                                  (Triggers Worker Event)
+                                                        │
+                                                        ▼
+                                                  AWS Lambda (Asynchronous Ingestion Worker)
+                                                        │
+                                             ┌──────────┴──────────┐
+                                             ▼                     ▼
+                                     Amazon S3 Vectors       Amazon Textract
+                                   (Embed & Index Chunks)   (Document Parsing)
+                                             │
+                                             ▼
+                                     Amazon DynamoDB (Updates status to "ready" or "failed")
 ```
 
 ---
 
 ## Comprehensive AWS Service Directory
 
-Below is the breakdown of the **11 AWS Services** utilized in this project.
+Below is the breakdown of the **12 AWS Services** utilized in this project.
 
 ---
 
@@ -216,7 +243,7 @@ Below is the breakdown of the **11 AWS Services** utilized in this project.
 
 > **Friendly Analogy:** Think of Textract as a "supercharged OCR scanner" that doesn't just read the characters on a page, but understands if they belong to a formal table, an invoice grid, or a multi-column article layout.
 
-- **Role in this Chatbot:** Serves as the future scale pipeline for ingesting complex multi-page PDF documents. It scans PDFs, reconstructs layout structures (like paragraph grids, forms, and tables), and formats them into clean markdown text before embedding.
+- **Role in this Chatbot:** Serves as the pipeline for ingesting complex multi-page PDF documents. It scans PDFs, reconstructs layout structures (like paragraph grids, forms, and tables), and formats them into clean markdown text before embedding.
 - **Why it's cool:** Standard open-source Python PDF parsers scrape plain text, turning multi-column text into scrambled rows and tables into unreadable strings. Textract preserves the grid relationship, which is critical for making sure your RAG database retrieves accurate information.
 - **Key Concepts to Study & Google:**
   - _OCR (Optical Character Recognition)_
@@ -225,6 +252,24 @@ Below is the breakdown of the **11 AWS Services** utilized in this project.
 - **️ Pro Tip & Cost Trap:**
   - _The Trap:_ `AnalyzeDocument` (which parses forms and tables) is up to **30x more expensive** ($50 per 1,000 pages) than standard `DetectDocumentText` ($1.50 per 1,000 pages) after your trial ends.
   - _The Fix:_ Only invoke the heavy layout `Analyze` features if you strictly need complex grid extraction; otherwise, default your pipelines to standard text detection.
+
+---
+
+### 12. Amazon Simple Queue Service (SQS) & Dead Letter Queues (DLQ)
+
+> **Friendly Analogy:** Think of Amazon SQS as a "post office mail slot". When you want to send a letter, you don't wait at the post office for the mail carrier to drive it to the destination. You drop the letter in the slot and walk away, confident that the post office will deliver it in the background while you go about your day.
+
+- **Role in this Chatbot:** It acts as the asynchronous decoupling buffer for RAG document ingestion. When a user uploads a document, instead of running a slow, synchronous parsing script that might time out the browser session, the document is saved to S3, which immediately drops a notification message into `IngestionQueue`. A separate background Worker Lambda then pulls messages from the queue one at a time and processes them safely. If a job fails repeatedly (e.g., due to a temporary API timeout or DB lock), SQS automatically reroutes it to `IngestionDLQ` (Dead Letter Queue) after 3 retries so no uploads are lost.
+- **Why it's cool:** It enables 100% reliable background processing. The user gets an instant "Upload Accepted" response in under 50ms, while heavy calculations (OCR, embedding generation, database writes) occur silently in the background. If the system gets a sudden spike of 1,000 document uploads, SQS buffers them safely so your background Lambda worker isn't overwhelmed.
+- **Key Concepts to Study & Google:**
+  - _Decoupling / Publish-Subscribe Architectures_
+  - _SQS Standard vs. FIFO Queues_
+  - _Visibility Timeout_ (how long a message is hidden from other workers while one worker is processing it)
+  - _Dead Letter Queues (DLQ) & Redrive Policies_ (handling failed messages)
+  - _SQS Batch Size_ (processing messages in groups vs. one-by-one)
+- **️ Pro Tip & Cost Trap:**
+  - _The Trap:_ If your Lambda worker takes longer to process a document than the SQS queue's **Visibility Timeout**, SQS will assume the worker died and make the message visible again. Another worker will pick it up, leading to duplicate processing, double LLM bills, and database conflicts.
+  - _The Fix:_ Always ensure your SQS queue's `VisibilityTimeout` is at least **1.5x to 3x** the maximum execution timeout of your consumer Lambda function. (In this project, the worker timeout is 120s, and the SQS visibility timeout is 180s).
 
 ---
 
@@ -330,3 +375,12 @@ All web APIs (including API Gateway and serverful VMs) must expose a public-faci
   - Cache Context: `pk = CONV#conv-999` \| `sk = CTX`
     You can query the table for `pk = CONV#conv-999` and retrieve the conversation header, message transcripts, and context cache in **one single database operation** in under 5ms because they sit physically next to each other on the same database partition!
 - **Global Secondary Indexes (GSIs):** Since querying is only fast on `pk`, to look up conversations by `user_id`, we create a GSI where `user_id` acts as the alternate partition key, allowing AWS to replicate and index the data dynamically.
+
+---
+
+### Q5: Why did we transition the document ingestion flow to an event-driven SQS queue and background Lambda worker instead of processing it in the main API function?
+
+**A:** This is a classic shift from **synchronous busy-waiting** to **event-driven asynchronous design** to solve two major serverless limits: **timeouts** and **costs**.
+
+1. **Bypassing the 30-Second API Gateway Hard Timeout:** API Gateway HTTP APIs enforce a non-configurable **30-second integration timeout**. Parsing complex, multi-page PDFs using AWS Textract, chunking text, generating high-dimensional vector embeddings, and indexing them in S3 Vectors can easily exceed 30 seconds. In the old synchronous design, this resulted in the API Gateway aborting the client connection (throwing 502/504 errors) even if the background work was still running. By switching to SQS, the API immediately acknowledges the upload and returns an HTTP `202 Accepted` in <50ms. The actual processing occurs offline with a dedicated Lambda timeout of **120 seconds**, completely insulated from API Gateway timeouts.
+2. **Drastic Compute Cost Reductions:** AWS Lambda bills for execution time by the millisecond. In a synchronous design, the Lambda function had to spin in a busy-waiting loop, sleeping and polling Textract's status API (`GetDocumentTextDetection`) every few seconds. This meant paying for idle CPU time while waiting for a managed third-party service to finish. In the event-driven queue-centric design, S3 triggers SQS on object landing, and SQS instantly triggers the worker Lambda to start the job. SQS handles built-in automatic retries if the database or embedding endpoint fails, and routes toxic messages safely to the Dead Letter Queue (DLQ) without crashing the user's browser session.

@@ -248,20 +248,18 @@ CorsConfiguration:
 
 ---
 
-### 10. Lambda Timeout Set to 30s — LLM Streaming May Hit Gateway Limits
+### 10. [RESOLVED] Lambda Timeout Set to 30s — Decoupled Async Ingestion Implemented
 
 **Location**: `template.yaml` line 46
 
-API Gateway HTTP API has a **30-second integration timeout** that cannot be overridden. For streaming chat responses with large models, the Lambda Function URL route sidesteps this — but the API Gateway routes (conversations, upload, etc.) share the 30-second Lambda timeout.
+API Gateway HTTP API has a **30-second integration timeout** that cannot be overridden. In the old synchronous ingestion design, parsing complex multi-page documents and indexing vectors would regularly exceed 30 seconds, causing integration failures and Lambda busy-waiting wastes.
 
-For Textract async jobs (`StartDocumentTextDetection` → polling `GetDocumentTextDetection`), 30 seconds may be insufficient for large documents.
-
-**Fix**: Consider separating document processing into an **async pattern**:
-1. Upload document → Lambda returns a `job_id` immediately
-2. Textract processes asynchronously (via SNS/SQS event trigger)
-3. Frontend polls `/documents/{job_id}/status`
-
-The `docs/AWS_EVENT_DRIVEN_INGESTION.md` already documents this pattern — consider implementing it.
+**Resolution**: Fully resolved by migrating to an **event-driven, decoupled asynchronous architecture** using **Amazon SQS** queues and an **Ingestion Worker Lambda function**:
+1. Documents are uploaded under S3 bucket staging prefix (`staging/`) and FastAPI returns `202 Accepted` instantly (<50ms).
+2. The landing file triggers an S3 Event Notification which publishes a job message into `IngestionQueue`.
+3. SQS triggers `ChatbotIngestionWorkerFunction` with `BatchSize: 1` and a dedicated **120-second timeout** to process the document via Textract and calculate vector embeddings in the background.
+4. The worker updates DynamoDB metadata once complete and cleans up the staging files in S3.
+5. SQS is configured with an `IngestionDLQ` to catch toxic or failed payloads with a 14-day retention cycle.
 
 ---
 
@@ -363,7 +361,7 @@ LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
 | 7 | SSM key not refreshed on rotation | 🟡 Important | Low (doc only) |
 | 8 | GSI `ProjectionType: ALL` wastes WCU | 🟡 Important | Low |
 | 9 | CORS `AllowOrigins: "*"` | 🟡 Important | Low |
-| 10 | Textract async not implemented | 🟡 Important | High |
+| 10 | **[RESOLVED]** Textract async not implemented | 🟢 Resolved | High (Completed!) |
 | 11 | No X-Ray tracing | 🟢 Nice to Have | Low |
 | 12 | Log retention not environment-aware | 🟢 Nice to Have | Low |
 | 13 | `S3CrudPolicy` broader than needed | 🟢 Nice to Have | Low |
@@ -388,7 +386,6 @@ LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
 | **5** | `ALLOW_USER_PASSWORD_AUTH` | The risk here is someone intercepting your password in transit to Cognito. Since the call goes over TLS to `cognito-idp.amazonaws.com`, plaintext in the protocol doesn't mean plaintext on the wire. For a single-user personal app, this is an acceptable trade-off vs. the complexity of implementing SRP. |
 | **7** | SSM key rotation doc | You're not rotating keys on a schedule. When you do rotate, you'll remember to redeploy — or just add a note to yourself. No need for a formal runbook. |
 | **9** | CORS `AllowOrigins: "*"` | CORS is a browser-enforcement mechanism. It prevents *other websites* from making requests using your credentials. Since you're the only user, this is a non-issue — you won't be visiting malicious third-party sites that exfiltrate your token. |
-| **10** | Textract async pattern | Only matters for large PDFs with very slow OCR. For personal document ingestion, the synchronous pattern is fine — you can wait a few extra seconds. The infra cost of adding SQS + SNS is zero, but the implementation complexity is high. |
 | **11** | X-Ray tracing | Useful for debugging in production teams. For personal use, CloudWatch logs are sufficient. |
 | **12** | Environment-aware log retention | You likely run a single `prod` stack. 7-day retention is already a reasonable default. Don't over-engineer this. |
 | **13** | `S3CrudPolicy` scope | The blast radius of an over-permissioned Lambda in your own account is just your own data. Not worth adding custom IAM boilerplate for a personal project. |

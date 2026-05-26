@@ -8,13 +8,15 @@ This document provides a line-by-line and section-by-section breakdown of the se
 
 The infrastructure declared in this SAM template represents a modern, serverless hybrid-routing architecture designed for optimal cost-efficiency, scalability, and responsiveness.
 
-The architecture separates standard transactional operations (user session routing, history fetching, and profile settings) from heavy streaming operations (real-time chat generation). It leverages:
+The architecture separates standard transactional operations (user session routing, history fetching, and profile settings) from heavy streaming operations (real-time chat generation) and asynchronous document ingestion workflows. It leverages:
 
 1. **Amazon Cognito** for secure user authentication.
 2. **Amazon API Gateway HTTP APIs (v2)** with a Cognito JWT Authorizer for securing metadata and CRUD endpoints.
 3. **AWS Lambda Function URLs (FURL)** configured with **AWS Lambda Web Adapter (LWA)** and `RESPONSE_STREAM` invocation mode to deliver ultra-low Time-to-First-Byte (TTFB) token streaming from LiteLLM.
 4. **Amazon DynamoDB** with a single-table composite key layout and a Global Secondary Index for highly efficient user conversation histories.
-5. **Amazon S3** for secure, private image upload storage alongside a public static S3 bucket for frontend React hosting.
+5. **Amazon S3** for secure, private uploads alongside a public static S3 bucket for frontend React hosting.
+6. **Amazon SQS (Simple Queue Service)** with a Dead Letter Queue (DLQ) to decouple heavy RAG document ingestion flows, triggered via S3 Event Notifications under the `staging/` key prefix.
+7. **AWS Lambda Ingestion Worker Function** running asynchronously to parse files using AWS Textract, calculate vector embeddings using LiteLLM/Gemini, index them in S3 Vectors, and update DynamoDB.
 
 ```mermaid
 graph TD
@@ -27,6 +29,16 @@ graph TD
     LambdaRest & LambdaStream -->|Read/Write History| DynamoDB[(DynamoDB Single-Table)]
     LambdaRest & LambdaStream -->|Secure LLM Keys| SSM[SSM Parameter Store]
     LambdaRest & LambdaStream -->|Upload/Retrieve Attachments| S3Uploads[(S3 Uploads Bucket)]
+
+    %% Asynchronous Ingestion Flow
+    LambdaRest -->|1. Upload File /staging/| S3Uploads
+    S3Uploads -->|2. S3 ObjectCreated Event| SQS[Amazon SQS Ingestion Queue]
+    SQS -->|3. Trigger batch=1| Worker[Lambda Ingestion Worker]
+    Worker -->|4. Read Staging File| S3Uploads
+    Worker -->|5. Extract Text| Textract[AWS Textract]
+    Worker -->|6. Embed & Upsert| VS[(S3 Vectors Index)]
+    Worker -->|7. Update Document Status| DynamoDB
+    SQS -.->|Failure Redrive| DLQ[SQS Ingestion DLQ]
 ```
 
 ### 1.1 How Key Services Work Under the Hood
@@ -64,6 +76,20 @@ Cognito acts as an OIDC-compliant Identity Provider (IdP).
 
 - **Website Configuration:** S3 operates as an HTTP server when `WebsiteConfiguration` is enabled, hosting static client files. To support SPA client-side routers (like Vite's React Router), `index.html` is mapped to both the `IndexDocument` and the `ErrorDocument`. If a user navigates to `/conversations`, S3 serves the `index.html` wrapper, and client-side React routes intercept the path natively.
 - **Presigned URLs for Security:** The upload bucket `ChatbotStorageBucket` is kept strictly private. To securely render uploaded images in the user’s browser, the backend uses `boto3` to generate an **S3 Presigned GET URL**. Under the hood, the backend cryptographically signs the file's S3 path using the Lambda's IAM execution role, appending query parameters (`X-Amz-Signature`, `X-Amz-Expires`). The browser uses this URL to download the image directly from S3 without making the bucket public.
+
+#### E. Amazon SQS & Dead Letter Queues (Asynchronous Ingestion Decoupling)
+
+- **S3 Event Notification trigger:** Document ingestion RAG flows represent heavy CPU operations. Instead of running them inside the standard synchronous user request cycle (which would time out at 30 seconds), the API function uploads files to S3 under the `/staging/` prefix and returns `202 Accepted` instantly.
+- **Decoupled Job Buffering:** S3 uploads automatically trigger S3 Event Notifications which publish a job event directly to **Amazon SQS**.
+  1. The queue (`IngestionQueue`) acts as a highly resilient buffer. It stores the message safely and handles automatic visibility management.
+  2. If the worker encounters temporary errors (such as vector store locks or LLM timeout limits), SQS retries the message processing automatically.
+  3. If a message fails standard processing 3 times (the `maxReceiveCount` policy limit), SQS automatically reroutes it to the Dead Letter Queue (`IngestionDLQ`) with a 14-day retention cycle. This guarantees that failed imports are captured and can be diagnosed without losing user uploads.
+
+#### F. Asynchronous Worker Lambda (Dedicated Computation)
+
+- **Dedicated Worker Resource:** Decorating the background process with a separate function (`ChatbotIngestionWorkerFunction`) provides isolated scale limits and resource allocation.
+- **Visibility & Timeouts Alignment:** The worker function is configured with a **120-second timeout** to process large PDFs or documents via Textract. To ensure the queue doesn't release the message to a duplicate worker during this heavy processing window, the SQS Queue is configured with a **180-second Visibility Timeout**. This 1.5x timeout buffer prevents duplicate ingestion runs and race conditions.
+- **SQS Trigger Integration:** The worker binds to SQS with a `BatchSize: 1` trigger configuration, executing one ingestion job at a time to prevent CPU resource thrashing and keep execution within safe boundaries.
 
 ---
 
@@ -461,11 +487,12 @@ TimeToLiveSpecification:
 
 ## 10. Amazon S3 Storage Buckets
 
-### Private Image Attachments:
+### Private Uploads & Ingestion Staging Bucket:
 
 ```yaml
 ChatbotStorageBucket:
   Type: AWS::S3::Bucket
+  DependsOn: IngestionQueuePolicy
   Properties:
     BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
     PublicAccessBlockConfiguration:
@@ -473,22 +500,29 @@ ChatbotStorageBucket:
       BlockPublicPolicy: true
       IgnorePublicAcls: true
       RestrictPublicBuckets: true
+    LifecycleConfiguration:
+      Rules:
+        - Id: ExpireTemporaryUploads
+          Status: Enabled
+          ExpirationInDays: 7
+    NotificationConfiguration:
+      QueueConfigurations:
+        - Event: s3:ObjectCreated:*
+          Filter:
+            S3Key:
+              Rules:
+                - Name: prefix
+                  Value: staging/
+          Queue: !GetAtt IngestionQueue.Arn
 ```
 
-- **Explanation:** Private bucket for image files. Uses `PublicAccessBlockConfiguration` to strictly block public reads.
-- **Why it was needed:** Protects private uploads. The backend serves short-lived (1-hour) **S3 Presigned GET URLs** to display files, guaranteeing zero public exposure.
+- **Explanation:** Private bucket for image and RAG document uploads. It incorporates the following key settings:
+  - **`DependsOn: IngestionQueuePolicy`**: Enforces resource ordering. The bucket cannot be initialized before the SQS Queue Policy is active. This avoids S3 deployment failures when attaching event notifications to SQS queues.
+  - **`PublicAccessBlockConfiguration`**: Strictly blocks public reads to protect private user documents.
+  - **`LifecycleConfiguration`**: Automatically expires uploaded files after **7 days** to stay within AWS Free Tier storage boundaries.
+  - **`NotificationConfiguration`**: Maps an S3 event notification system. Whenever a new file is uploaded under the `staging/` key prefix, S3 automatically publishes an `s3:ObjectCreated:*` message containing the bucket and object key to the SQS queue (`IngestionQueue`).
+- **Why it was needed:** Serves as a staging ground for multi-page documents. The frontend uploads files directly here, which triggers the asynchronous background processing without keeping the client blocked in a busy-waiting loop.
 - **Alternatives:** Public S3 bucket. _Warning: Public buckets leak user data._
-
-```yaml
-LifecycleConfiguration:
-  Rules:
-    - Id: ExpireTemporaryUploads
-      Status: Enabled
-      ExpirationInDays: 7
-```
-
-- **Explanation:** Automatically deletes objects older than **7 days**.
-- **Why it was needed:** Chatbot attachments are temporary. Auto-deletion keeps the bucket sizes bounded, preserving S3 free-tier space.
 
 ---
 
@@ -533,7 +567,138 @@ ChatbotFrontendBucketPolicy:
 
 ---
 
-## 11. AWS Cognito Authentication User Pools
+## 11. AWS SQS Queues for RAG Ingestion
+
+Decoupling ingestion requires queues to buffer objects uploaded to S3 and process them asynchronously.
+
+```yaml
+# Dead Letter Queue for failed ingestion runs
+IngestionDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub chatbot-ingestion-dlq-${Environment}
+    MessageRetentionPeriod: 1209600 # 14 days
+
+# Main Ingestion Queue
+IngestionQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub chatbot-ingestion-queue-${Environment}
+    VisibilityTimeout: 180 # Must be >= Ingestion Worker Timeout (120s)
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
+      maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
+```
+
+### Explanation:
+- **`IngestionDLQ`**: Standard SQS queue set up as a Dead Letter Queue.
+  - **`MessageRetentionPeriod: 1209600`** (14 days): Retains failed messages for two weeks (the maximum SQS allows), giving developers ample time to inspect, troubleshoot, and re-drive raw message payloads that failed processing.
+- **`IngestionQueue`**: The primary job buffer.
+  - **`VisibilityTimeout: 180`**: Crucial setting configured to **180 seconds**. When a worker Lambda polls a message, SQS hides the message from other workers. This timeout must exceed the processing Lambda's execution timeout (120s) with a margin of safety, ensuring a worker has enough time to complete the Textract parsing and RAG embedding before SQS assumes it failed and exposes the message to another worker.
+  - **`RedrivePolicy`**: Re-routes messages to `IngestionDLQ` if they fail processing `3` times (`maxReceiveCount: 3`).
+
+```yaml
+IngestionQueuePolicy:
+  Type: AWS::SQS::QueuePolicy
+  Properties:
+    Queues:
+      - !Ref IngestionQueue
+    PolicyDocument:
+      Version: "2012-10-17"
+      Statement:
+        - Sid: AllowS3ToSendMessage
+          Effect: Allow
+          Principal:
+            Service: s3.amazonaws.com
+          Action: sqs:SendMessage
+          Resource: !GetAtt IngestionQueue.Arn
+          Condition:
+            ArnLike:
+              aws:SourceArn: !Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"
+            StringEquals:
+              aws:SourceAccount: !Ref AWS::AccountId
+```
+
+### Explanation:
+- **`IngestionQueuePolicy`**: Standard Queue Policy that authorizes S3's service principal (`s3.amazonaws.com`) to call `sqs:SendMessage` on our queue.
+  - **`Condition`**: Strictly locks permissions using `SourceArn` matching our private uploads bucket name and `SourceAccount` matching the AWS Account ID. This prevents other S3 buckets in other AWS accounts from posting messages to our ingestion worker queue.
+
+---
+
+## 12. Ingestion Worker Lambda Function
+
+This worker process consumes messages from the SQS queue and handles the end-to-end extraction, chunking, embedding, vector database indexing, and DynamoDB status updates completely out-of-band.
+
+```yaml
+ChatbotIngestionWorkerFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    CodeUri: ./backend
+    Handler: app.worker.handler
+    Timeout: 120
+    MemorySize: 512
+    Policies:
+      - SQSPollerPolicy:
+          QueueName: !GetAtt IngestionQueue.QueueName
+      - S3CrudPolicy:
+          BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
+      - DynamoDBCrudPolicy:
+          TableName: !Ref ChatbotTable
+      - SSMParameterReadPolicy:
+          ParameterName: chatbot/litellm_api_key
+      - SSMParameterReadPolicy:
+          ParameterName: chatbot/litellm_vision_api_key
+      - Statement:
+          - Effect: Allow
+            Action:
+              - s3vectors:PutVectors
+              - s3vectors:QueryVectors
+              - s3vectors:GetVectors
+              - s3vectors:ListIndexes
+            Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
+          - Effect: Allow
+            Action:
+              - s3vectors:ListVectorBuckets
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - textract:DetectDocumentText
+              - textract:StartDocumentTextDetection
+              - textract:GetDocumentTextDetection
+            Resource: "*"
+    Events:
+      SQSTrigger:
+        Type: SQS
+        Properties:
+          Queue: !GetAtt IngestionQueue.Arn
+          BatchSize: 1 # Process one file at a time
+```
+
+### Explanation:
+- **`Handler: app.worker.handler`**: Sets the entry point to the background worker module, which processes SQS records instead of serving ASGI HTTP routes.
+- **`Timeout: 120`**: Configures a generous 2-minute timeout to allow the execution context to download large files from S3, wait for Textract processing, split text chunks, generate embeddings, and upsert them.
+- **`Policies`**: Follows least-privilege security by granting:
+  - **`SQSPollerPolicy`**: Authorizes polling and deleting processed messages from `IngestionQueue`.
+  - **`S3CrudPolicy`**: Grants permission to fetch staging files and delete them after successful ingestion.
+  - **`DynamoDBCrudPolicy`**: Authorizes updating document registry status in the single DynamoDB table.
+  - **`s3vectors` and `textract` policies**: Grants scoped permissions to interact with the serverless S3 Vector database indexes and AWS Textract OCR services.
+- **`SQSTrigger`**: Maps the SQS event source.
+  - **`BatchSize: 1`**: Instructs Lambda to invoke the function with exactly one message at a time. This isolates failures (a toxic file won't fail an entire batch of uploads) and bounds memory footprint.
+
+```yaml
+ChatbotIngestionWorkerFunctionLogGroup:
+  Type: AWS::Logs::LogGroup
+  Properties:
+    LogGroupName: !Sub /aws/lambda/${ChatbotIngestionWorkerFunction}
+    RetentionInDays: 7
+```
+
+### Explanation:
+- **`ChatbotIngestionWorkerFunctionLogGroup`**: Explicitly caps worker logs retention to **7 days** to ensure diagnostic worker outputs do not quietly inflate CloudWatch storage costs.
+
+---
+
+## 13. AWS Cognito Authentication User Pools
 
 ```yaml
 ChatbotUserPool:
@@ -586,7 +751,7 @@ ChatbotUserPoolClient:
 
 ---
 
-## 12. Template Outputs
+## 14. Template Outputs
 
 Defines outputs generated after deployment, which are queried by automation scripts.
 
@@ -635,9 +800,7 @@ UserPoolClientId:
 
 - **Purpose:** Unique ids consumed by Cognito's raw HTTP auth client on the frontend React App to resolve signup and login paths.
 
----
-
-## 13. Comprehensive AWS Service Directory & Integration Matrix
+## 15. Comprehensive AWS Service Directory & Integration Matrix
 
 This section provides a summary of all active AWS services utilized in the chatbot application, explaining why they are included and how they connect with other resources in the stack.
 
@@ -650,10 +813,12 @@ This section provides a summary of all active AWS services utilized in the chatb
 | **AWS Lambda (arm64 Graviton)**          | Serverless compute layer executing backend FastAPI logic. Graviton2 is selected for cost-efficiency.       | Invoked by both API Gateway and Lambda Function URLs. Interfaces with SSM Parameter Store for API keys, writes/reads data in DynamoDB, and uploads attachments to S3.  |
 | **AWS Lambda Function URL (FURL)**       | Exposes high-speed, direct HTTP endpoints configured for chunked streaming.                                | Bridges streaming routes (`/chat/stream`) directly from the React frontend to the backend Lambda LWA server, bypassing API Gateway limits.                             |
 | **Amazon DynamoDB**                      | Fast, flexible NoSQL database storing user sessions, metadata, and history under a single-table design.    | Accessed by Lambda functions to load conversation indexes, write user and assistant responses, and clear expired cache records.                                        |
-| **Amazon S3 (Uploads Bucket)**           | Encrypted, private storage for image attachments. Features automatic 7-day lifecycles to conserve storage. | Lambda uploads image bytes here during `/chat/image` requests and generates temporary, signed S3 presigned URLs for client rendering.                                  |
+| **Amazon S3 (Uploads Bucket)**           | Encrypted, private storage for image attachments. Features automatic 7-day lifecycles to conserve storage. | Lambda uploads image bytes here during `/chat/image` requests and generates temporary, signed S3 presigned URLs for client rendering. Also acts as an ingestion staging directory under the `/staging/` prefix. |
 | **Amazon S3 (Frontend Bucket)**          | Hosts Vite + React production build files natively as a static HTTP web site.                              | Read publicly by web browsers to load the UI. The loaded React client submits prompt requests to API Gateway and Lambda Function URLs.                                 |
 | **AWS SSM Parameter Store**              | Secure configuration storage. KMS-encrypts sensitive LLM and vision API keys.                              | Lambda execution role reads this parameters at container cold-start, fetching and decrypting keys for LiteLLM.                                                         |
 | **Amazon CloudWatch Logs**               | Centralized application logging and diagnostic error monitoring.                                           | Automatically captures stdout, debug records, and runtime exceptions from Lambda functions. Set to 7-day retention.                                                    |
+| **Amazon SQS (Simple Queue Service)**    | Asymmetric decoupling queue that buffers staging document uploads.                                        | Receives event notifications from S3 when objects land under the `staging/` key prefix. Triggers the background worker function asynchronously. Redrives to DLQ on failure. |
+| **AWS Lambda Ingestion Worker**          | Decoupled execution worker Lambda handling document text extraction and embedding vector RAG indexing.     | Triggered automatically by SQS queue events. Integrates with S3 for file reads/writes, Textract for OCR, S3 Vectors for indexing, and DynamoDB for status updates.     |
 
 ### Architectural Integration Map
 
@@ -671,4 +836,25 @@ Browser ──(Header: JWT)─────► API Gateway ──(Cognito Validat
 
 [ HIGH-SPEED CHUNK STREAMING ROUTE ]
 Browser ──(Header: JWT)─────► Lambda Function URL (Streaming) ──► Lambda (LWA/PyJWT) ──► LiteLLM / Gemini ──► DynamoDB Update
+
+[ DECOUPLED ASYNCHRONOUS DOCUMENT INGESTION ROUTE ]
+Browser ──(Header: JWT)─────► API Gateway ──(Cognito Validate)──► Lambda (Mangum) ──► Uploads to S3 (/staging/)
+                                                                                           │
+                                                                                    (S3 Notification)
+                                                                                           │
+                                                                                           ▼
+                                                                                   SQS Ingestion Queue
+                                                                                           │
+                                                                                     (SQS Trigger)
+                                                                                           │
+                                                                                           ▼
+                                                                               Lambda Ingestion Worker
+                                                                                           │
+                                                                           ┌───────────────┴───────────────┐
+                                                                           ▼                               ▼
+                                                                    AWS Textract OCR               S3 Vectors Index
+                                                                           │                               │
+                                                                           └───────────────┬───────────────┘
+                                                                                           ▼
+                                                                                    DynamoDB Status Update
 ```

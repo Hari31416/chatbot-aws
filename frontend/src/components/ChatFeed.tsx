@@ -1,17 +1,17 @@
-import * as React from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import type { Message } from '../types'
+import * as React from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Message } from "../types";
 
 interface ChatFeedProps {
-  activeMessages: Message[]
-  isPending: boolean
-  setLightboxImage: (url: string | null) => void
-  setInputText: (text: string) => void
-  isSidebarOpen: boolean
-  messagesEndRef: React.RefObject<HTMLDivElement | null>
-  isStreaming?: boolean
-  activeConversationId?: string | null
+  activeMessages: Message[];
+  isPending: boolean;
+  setLightboxImage: (url: string | null) => void;
+  setInputText: (text: string) => void;
+  isSidebarOpen: boolean;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  isStreaming?: boolean;
+  activeConversationId?: string | null;
 }
 
 export function ChatFeed({
@@ -24,112 +24,131 @@ export function ChatFeed({
   isStreaming = false,
   activeConversationId = null,
 }: ChatFeedProps) {
-  const [copiedBlockId, setCopiedBlockId] = React.useState<string | null>(null)
+  const [copiedBlockId, setCopiedBlockId] = React.useState<string | null>(null);
 
   // --- Scrolling and stream-following state refs ---
-  const containerRef = React.useRef<HTMLDivElement>(null)
-  const shouldAutoScrollRef = React.useRef<boolean>(true)
-  const prevConversationIdRef = React.useRef<string | null>(null)
-  const prevMessagesLengthRef = React.useRef<number>(0)
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = React.useRef<boolean>(true);
+  const prevConversationIdRef = React.useRef<string | null>(null);
+  const prevMessagesLengthRef = React.useRef<number>(0);
 
   const scrollToBottom = () => {
-    const container = containerRef.current
-    if (!container) return
+    const container = containerRef.current;
+    if (!container) return;
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: 'auto',
-    })
-  }
+      behavior: "auto",
+    });
+  };
 
   const handleScroll = () => {
-    const container = containerRef.current
-    if (!container) return
+    const container = containerRef.current;
+    if (!container) return;
 
     // Check if the scroll position is near the bottom (within a 100px threshold).
     // If the user scrolls up (distance > 100px), we pause auto-scrolling to follow the user.
     // If they scroll back down (distance <= 100px), we resume auto-scrolling.
     const isAtBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight <= 100
+      container.scrollHeight - container.scrollTop - container.clientHeight <=
+      100;
 
-    shouldAutoScrollRef.current = isAtBottom
-  }
+    shouldAutoScrollRef.current = isAtBottom;
+  };
 
   // Reset auto-scroll flag and scroll to bottom when conversation changes
   React.useEffect(() => {
     if (activeConversationId !== prevConversationIdRef.current) {
-      prevConversationIdRef.current = activeConversationId
-      shouldAutoScrollRef.current = true
-      scrollToBottom() // instant scroll for different conversation
+      prevConversationIdRef.current = activeConversationId;
+      shouldAutoScrollRef.current = true;
+      scrollToBottom(); // instant scroll for different conversation
     }
-  }, [activeConversationId])
+  }, [activeConversationId]);
 
   // Monitor messages and stream chunks
   React.useEffect(() => {
     if (!activeMessages || activeMessages.length === 0) {
-      prevMessagesLengthRef.current = 0
-      return
+      prevMessagesLengthRef.current = 0;
+      return;
     }
 
-    const prevLength = prevMessagesLengthRef.current
-    const newLength = activeMessages.length
-    prevMessagesLengthRef.current = newLength
+    const prevLength = prevMessagesLengthRef.current;
+    const newLength = activeMessages.length;
+    prevMessagesLengthRef.current = newLength;
 
     if (newLength > prevLength) {
-      const lastMessage = activeMessages[newLength - 1]
+      const lastMessage = activeMessages[newLength - 1];
       // When user sends a message, force scroll to bottom and enable follow
-      if (lastMessage.role === 'user') {
-        shouldAutoScrollRef.current = true
-        scrollToBottom()
+      if (lastMessage.role === "user") {
+        shouldAutoScrollRef.current = true;
+        scrollToBottom();
       } else {
         // New assistant message or other event, scroll if we are in auto-scroll mode
         if (shouldAutoScrollRef.current) {
-          scrollToBottom()
+          scrollToBottom();
         }
       }
     } else if (isStreaming && shouldAutoScrollRef.current) {
       // Stream chunk received while we are following the stream, use instant scroll
-      scrollToBottom()
+      scrollToBottom();
     }
-  }, [activeMessages, isStreaming])
+  }, [activeMessages, isStreaming]);
 
   const handleCopyCode = (codeText: string, id: string) => {
     navigator.clipboard.writeText(codeText).then(() => {
-      setCopiedBlockId(id)
-      setTimeout(() => setCopiedBlockId(null), 2000)
-    })
-  }
+      setCopiedBlockId(id);
+      setTimeout(() => setCopiedBlockId(null), 2000);
+    });
+  };
 
   // --- Beautiful React Markdown/Code Block Parser ---
   const markdownComponents = React.useMemo(
     () => ({
       h1: ({ children, ...props }: any) => (
-        <h1 className="text-xl font-bold mt-4 mb-2 text-zinc-900 dark:text-white" {...props}>
+        <h1
+          className="text-xl font-bold mt-4 mb-2 text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </h1>
       ),
       h2: ({ children, ...props }: any) => (
-        <h2 className="text-lg font-bold mt-3 mb-1.5 text-zinc-900 dark:text-white" {...props}>
+        <h2
+          className="text-lg font-bold mt-3 mb-1.5 text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </h2>
       ),
       h3: ({ children, ...props }: any) => (
-        <h3 className="text-base font-bold mt-2.5 mb-1 text-zinc-900 dark:text-white" {...props}>
+        <h3
+          className="text-base font-bold mt-2.5 mb-1 text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </h3>
       ),
       p: ({ children, ...props }: any) => (
-        <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed my-2" {...props}>
+        <p
+          className="text-zinc-700 dark:text-zinc-300 leading-relaxed my-2"
+          {...props}
+        >
           {children}
         </p>
       ),
       ul: ({ children, ...props }: any) => (
-        <ul className="list-disc pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300" {...props}>
+        <ul
+          className="list-disc pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300"
+          {...props}
+        >
           {children}
         </ul>
       ),
       ol: ({ children, ...props }: any) => (
-        <ol className="list-decimal pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300" {...props}>
+        <ol
+          className="list-decimal pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300"
+          {...props}
+        >
           {children}
         </ol>
       ),
@@ -139,7 +158,10 @@ export function ChatFeed({
         </li>
       ),
       strong: ({ children, ...props }: any) => (
-        <strong className="font-semibold text-zinc-900 dark:text-white" {...props}>
+        <strong
+          className="font-semibold text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </strong>
       ),
@@ -169,23 +191,35 @@ export function ChatFeed({
       ),
       table: ({ children, ...props }: any) => (
         <div className="overflow-x-auto my-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full border-collapse text-left text-sm" {...props}>
+          <table
+            className="w-full border-collapse text-left text-sm"
+            {...props}
+          >
             {children}
           </table>
         </div>
       ),
       thead: ({ children, ...props }: any) => (
-        <thead className="bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800" {...props}>
+        <thead
+          className="bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800"
+          {...props}
+        >
           {children}
         </thead>
       ),
       tbody: ({ children, ...props }: any) => (
-        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800" {...props}>
+        <tbody
+          className="divide-y divide-zinc-200 dark:divide-zinc-800"
+          {...props}
+        >
           {children}
         </tbody>
       ),
       tr: ({ children, ...props }: any) => (
-        <tr className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition-colors" {...props}>
+        <tr
+          className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition-colors"
+          {...props}
+        >
           {children}
         </tr>
       ),
@@ -206,11 +240,11 @@ export function ChatFeed({
         </td>
       ),
       code: ({ className, children, ...props }: any) => {
-        const match = /language-(\w+)/.exec(className || '')
-        const codeText = String(children).replace(/\n$/, '')
-        const isInline = !match && !codeText.includes('\n')
+        const match = /language-(\w+)/.exec(className || "");
+        const codeText = String(children).replace(/\n$/, "");
+        const isInline = !match && !codeText.includes("\n");
 
-        const blockId = React.useId()
+        const blockId = React.useId();
 
         if (isInline) {
           return (
@@ -220,10 +254,10 @@ export function ChatFeed({
             >
               {children}
             </code>
-          )
+          );
         }
 
-        const language = match ? match[1] : 'code'
+        const language = match ? match[1] : "code";
         return (
           <div className="my-3 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 text-zinc-200 dark:border-zinc-800">
             <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-400">
@@ -233,7 +267,7 @@ export function ChatFeed({
                 onClick={() => handleCopyCode(codeText, blockId)}
                 className="hover:text-zinc-200 transition-colors cursor-pointer"
               >
-                {copiedBlockId === blockId ? 'Copied!' : 'Copy'}
+                {copiedBlockId === blockId ? "Copied!" : "Copy"}
               </button>
             </div>
             <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-zinc-100">
@@ -242,26 +276,29 @@ export function ChatFeed({
               </code>
             </pre>
           </div>
-        )
+        );
       },
     }),
-    [copiedBlockId]
-  )
+    [copiedBlockId],
+  );
 
   const renderMarkdown = (text: string) => {
-    if (!text) return null
+    if (!text) return null;
     return (
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownComponents}
+      >
         {text}
       </ReactMarkdown>
-    )
-  }
+    );
+  };
 
   return (
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className={`flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin ${!isSidebarOpen ? 'pt-16' : ''}`}
+      className={`flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-thin ${!isSidebarOpen ? "pt-16" : ""}`}
     >
       {activeMessages.length === 0 ? (
         <div className="h-full flex flex-col items-center justify-center max-w-lg mx-auto text-center space-y-4 py-20">
@@ -274,13 +311,19 @@ export function ChatFeed({
 
           <div className="flex gap-2 w-full max-w-md pt-4 justify-center">
             <button
-              onClick={() => setInputText('How does AWS Lambda work in a serverless app?')}
+              onClick={() =>
+                setInputText("How does AWS Lambda work in a serverless app?")
+              }
               className="p-3 text-xs border border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg shadow-xs hover:bg-zinc-50 transition text-left w-full cursor-pointer"
             >
               Cloud Architecture Lambda
             </button>
             <button
-              onClick={() => setInputText('Explain how an S3 bucket hosts static React applications.')}
+              onClick={() =>
+                setInputText(
+                  "Explain how an S3 bucket hosts static React applications.",
+                )
+              }
               className="p-3 text-xs border border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg shadow-xs hover:bg-zinc-50 transition text-left w-full cursor-pointer"
             >
               SPA Hosting Guidelines
@@ -290,40 +333,51 @@ export function ChatFeed({
       ) : (
         <div className="max-w-3xl mx-auto space-y-5">
           {activeMessages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div
+              key={msg.id}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            >
               <div className="flex flex-col max-w-[85%] gap-0.5">
                 {/* Role Tag Label */}
                 <span
                   className={`text-[10px] uppercase font-semibold tracking-wider px-2 ${
-                    msg.role === 'user' ? 'text-right text-blue-500' : 'text-left text-zinc-400'
+                    msg.role === "user"
+                      ? "text-right text-blue-500"
+                      : "text-left text-zinc-400"
                   }`}
                 >
-                  {msg.role === 'user' ? 'YOU' : 'ASSISTANT'}
+                  {msg.role === "user" ? "YOU" : "ASSISTANT"}
                 </span>
 
                 {/* Chat Bubble */}
                 <div
                   className={`rounded-xl px-4 py-2.5 text-sm shadow-xs ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white font-medium'
-                      : 'bg-white border border-zinc-200 text-zinc-900 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100'
+                    msg.role === "user"
+                      ? "bg-blue-600 text-white font-medium"
+                      : "bg-white border border-zinc-200 text-zinc-900 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
                   }`}
                 >
                   {/* Presigned image attachment */}
                   {msg.attachment && (
                     <div className="mb-2 max-w-xs overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
                       <img
-                        src={msg.attachment.presigned_url || ''}
+                        src={msg.attachment.presigned_url || ""}
                         alt="Attached file"
-                        onClick={() => setLightboxImage(msg.attachment?.presigned_url || null)}
+                        onClick={() =>
+                          setLightboxImage(
+                            msg.attachment?.presigned_url || null,
+                          )
+                        }
                         className="w-full max-h-40 object-cover cursor-zoom-in hover:opacity-90"
                       />
                     </div>
                   )}
 
                   {/* Content Render */}
-                  {msg.role === 'user' ? (
-                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                  {msg.role === "user" ? (
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {msg.content}
+                    </p>
                   ) : (
                     <div className="prose prose-zinc dark:prose-invert max-w-none">
                       {renderMarkdown(msg.content)}
@@ -339,8 +393,14 @@ export function ChatFeed({
                 </div>
 
                 {/* Timestamp */}
-                <span className={`text-[9px] text-zinc-400 px-1 font-mono ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                <span
+                  className={`text-[9px] text-zinc-400 px-1 font-mono ${msg.role === "user" ? "text-right" : "text-left"}`}
+                >
+                  {new Date(msg.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
                 </span>
               </div>
             </div>
@@ -363,5 +423,5 @@ export function ChatFeed({
         </div>
       )}
     </div>
-  )
+  );
 }

@@ -1,14 +1,14 @@
-import { Button } from './ui/button'
+import { Button } from "./ui/button";
 
 interface SettingsModalProps {
-  isSettingsOpen: boolean
-  setIsSettingsOpen: (open: boolean) => void
-  isBackendOnline: boolean | undefined
-  recheckBackendHealth: () => void
-  isCheckingHealth: boolean
-  apiBaseUrl: string
-  setApiBaseUrl: (url: string) => void
-  userId: string
+  isSettingsOpen: boolean;
+  setIsSettingsOpen: (open: boolean) => void;
+  isBackendOnline: boolean | undefined;
+  recheckBackendHealth: () => void;
+  isCheckingHealth: boolean;
+  apiBaseUrl: string;
+  setApiBaseUrl: (url: string) => void;
+  userId: string;
 }
 
 export function SettingsModal({
@@ -21,7 +21,7 @@ export function SettingsModal({
   setApiBaseUrl,
   userId,
 }: SettingsModalProps) {
-  if (!isSettingsOpen) return null
+  if (!isSettingsOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-45 flex items-center justify-center p-4 backdrop-blur-xs">
@@ -41,8 +41,10 @@ export function SettingsModal({
           <div className="flex items-center justify-between p-2 rounded-lg border border-zinc-205 dark:border-zinc-800 text-xs">
             <span>API Heartbeat:</span>
             <span className="font-semibold flex items-center gap-1.5">
-              <span className={`inline-flex rounded-full h-2 w-2 ${isBackendOnline ? 'bg-emerald-500' : 'bg-red-500'}`} />
-              {isBackendOnline ? 'Connected' : 'Offline'}
+              <span
+                className={`inline-flex rounded-full h-2 w-2 ${isBackendOnline ? "bg-emerald-500" : "bg-red-500"}`}
+              />
+              {isBackendOnline ? "Connected" : "Offline"}
             </span>
             <button
               type="button"
@@ -89,5 +91,5 @@ export function SettingsModal({
         </div>
       </div>
     </div>
-  )
+  );
 }

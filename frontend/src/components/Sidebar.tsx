@@ -1,19 +1,19 @@
-import * as React from 'react'
-import type { Conversation } from '../types'
+import * as React from "react";
+import type { Conversation } from "../types";
 
 interface SidebarProps {
-  isSidebarOpen: boolean
-  setIsSidebarOpen: (open: boolean) => void
-  conversations: Conversation[]
-  activeConversationId: string | null
-  setActiveConversationId: (id: string | null) => void
-  handleCreateConversation: () => void
-  handleDeleteConversation: (id: string, e: React.MouseEvent) => void
-  userId: string
-  theme: string
-  setTheme: (theme: 'light' | 'dark') => void
-  handleLogout: () => void
-  onOpenDocuments?: () => void
+  isSidebarOpen: boolean;
+  setIsSidebarOpen: (open: boolean) => void;
+  conversations: Conversation[];
+  activeConversationId: string | null;
+  setActiveConversationId: (id: string | null) => void;
+  handleCreateConversation: () => void;
+  handleDeleteConversation: (id: string, e: React.MouseEvent) => void;
+  userId: string;
+  theme: string;
+  setTheme: (theme: "light" | "dark") => void;
+  handleLogout: () => void;
+  onOpenDocuments?: () => void;
 }
 
 export function Sidebar({
@@ -44,8 +44,8 @@ export function Sidebar({
       <aside
         className={`fixed md:relative flex flex-col border-r border-zinc-200 bg-white dark:bg-zinc-900 transition-all duration-300 z-40 shrink-0 h-full shadow-lg md:shadow-none ${
           isSidebarOpen
-            ? 'w-64 translate-x-0'
-            : 'w-64 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden border-none'
+            ? "w-64 translate-x-0"
+            : "w-64 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden border-none"
         }`}
       >
         {/* Sidebar Brand Header */}
@@ -66,7 +66,11 @@ export function Sidebar({
               stroke="currentColor"
               className="w-5 h-5"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.75 19.5 8.25 12l7.5-7.5"
+              />
             </svg>
           </button>
         </div>
@@ -80,7 +84,7 @@ export function Sidebar({
             <span>+</span>
             <span>New Chat</span>
           </button>
-          
+
           <button
             onClick={onOpenDocuments}
             className="w-full flex items-center justify-start gap-3 bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg px-4 py-2 text-sm font-medium transition-all cursor-pointer"
@@ -107,8 +111,8 @@ export function Sidebar({
                 onClick={() => setActiveConversationId(conv.id)}
                 className={`group flex items-center justify-between rounded-lg px-3 py-2 cursor-pointer transition-all ${
                   activeConversationId === conv.id
-                    ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium'
-                    : 'text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/55 hover:text-zinc-850 dark:hover:text-zinc-200'
+                    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium"
+                    : "text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/55 hover:text-zinc-850 dark:hover:text-zinc-200"
                 }`}
               >
                 <span className="truncate text-sm">{conv.name}</span>
@@ -131,19 +135,24 @@ export function Sidebar({
               {userId.charAt(0).toUpperCase()}
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate" title={userId}>
+              <span
+                className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate"
+                title={userId}
+              >
                 {userId}
               </span>
-              <span className="text-[10px] text-zinc-400 font-medium">Active Session</span>
+              <span className="text-[10px] text-zinc-400 font-medium">
+                Active Session
+              </span>
             </div>
           </div>
 
           <div className="flex justify-between items-center text-xs text-zinc-550 dark:text-zinc-300 px-1 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
             <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               className="hover:text-zinc-750 dark:hover:text-zinc-100 cursor-pointer"
             >
-              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+              {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
             </button>
             <button
               onClick={handleLogout}
@@ -155,5 +164,5 @@ export function Sidebar({
         </div>
       </aside>
     </>
-  )
+  );
 }

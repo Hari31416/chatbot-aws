@@ -1,21 +1,21 @@
-import * as React from 'react'
-import type { RagDocument } from '../types'
+import * as React from "react";
+import type { RagDocument } from "../types";
 
 interface InputBarProps {
-  inputText: string
-  setInputText: (text: string) => void
-  selectedImage: File | null
-  imagePreviewUrl: string | null
-  handleSendMessage: (e: React.FormEvent) => void
-  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void
-  handleRemoveImage: () => void
-  fileInputRef: React.RefObject<HTMLInputElement | null>
-  isPending: boolean
-  useRag: boolean
-  setUseRag: (enabled: boolean) => void
-  ragDocumentsText: string
-  setRagDocumentsText: (text: string) => void
-  ragDocuments: RagDocument[]
+  inputText: string;
+  setInputText: (text: string) => void;
+  selectedImage: File | null;
+  imagePreviewUrl: string | null;
+  handleSendMessage: (e: React.FormEvent) => void;
+  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleRemoveImage: () => void;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  isPending: boolean;
+  useRag: boolean;
+  setUseRag: (enabled: boolean) => void;
+  ragDocumentsText: string;
+  setRagDocumentsText: (text: string) => void;
+  ragDocuments: RagDocument[];
 }
 
 export function InputBar({
@@ -35,25 +35,32 @@ export function InputBar({
   ragDocuments,
 }: InputBarProps) {
   const selectedDocuments = ragDocumentsText
-    .split(',')
+    .split(",")
     .map((item) => item.trim())
-    .filter(Boolean)
+    .filter(Boolean);
 
   const toggleDocument = (filename: string) => {
     const next = selectedDocuments.includes(filename)
       ? selectedDocuments.filter((item) => item !== filename)
-      : [...selectedDocuments, filename]
-    setRagDocumentsText(next.join(', '))
-  }
+      : [...selectedDocuments, filename];
+    setRagDocumentsText(next.join(", "));
+  };
 
   return (
     <div className="border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 z-25">
-      <form onSubmit={handleSendMessage} className="max-w-3xl mx-auto flex flex-col gap-2">
+      <form
+        onSubmit={handleSendMessage}
+        className="max-w-3xl mx-auto flex flex-col gap-2"
+      >
         {/* Attachment preview */}
         {imagePreviewUrl && (
           <div className="flex items-center gap-2 p-1.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-955 rounded-lg max-w-xs">
             <div className="relative h-10 w-10 rounded overflow-hidden border border-zinc-200 dark:border-zinc-850 shrink-0">
-              <img src={imagePreviewUrl} alt="Preview" className="h-full w-full object-cover" />
+              <img
+                src={imagePreviewUrl}
+                alt="Preview"
+                className="h-full w-full object-cover"
+              />
               <button
                 type="button"
                 onClick={handleRemoveImage}
@@ -92,9 +99,9 @@ export function InputBar({
         {useRag && ragDocuments.length > 0 && !selectedImage && (
           <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto px-1">
             {ragDocuments.map((document) => {
-              const selected = selectedDocuments.includes(document.source_doc)
-              const isProcessing = document.status === 'processing'
-              const isFailed = document.status === 'failed'
+              const selected = selectedDocuments.includes(document.source_doc);
+              const isProcessing = document.status === "processing";
+              const isFailed = document.status === "failed";
               return (
                 <button
                   key={document.document_id}
@@ -103,25 +110,25 @@ export function InputBar({
                   onClick={() => toggleDocument(document.source_doc)}
                   className={`rounded-md border px-2 py-1 text-xs transition ${
                     selected
-                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200'
-                    : isProcessing
-                      ? 'border-amber-250 bg-amber-50/30 text-amber-600 dark:border-amber-900/50 dark:bg-amber-955 dark:text-amber-450 opacity-60 cursor-not-allowed'
-                      : isFailed
-                        ? 'border-red-250 bg-red-50/30 text-red-600 dark:border-red-900/50 dark:bg-amber-955 dark:text-red-450 opacity-60 cursor-not-allowed'
-                      : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'
+                      ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200"
+                      : isProcessing
+                        ? "border-amber-250 bg-amber-50/30 text-amber-600 dark:border-amber-900/50 dark:bg-amber-955 dark:text-amber-450 opacity-60 cursor-not-allowed"
+                        : isFailed
+                          ? "border-red-250 bg-red-50/30 text-red-600 dark:border-red-900/50 dark:bg-amber-955 dark:text-red-450 opacity-60 cursor-not-allowed"
+                          : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
                   }`}
                   title={
                     isProcessing
-                      ? 'Document is currently being vectorized...'
+                      ? "Document is currently being vectorized..."
                       : isFailed
-                        ? 'Document ingestion failed.'
+                        ? "Document ingestion failed."
                         : `${document.chunks_ingested} chunks ingested`
                   }
                 >
-                  {isProcessing ? '⏳ ' : isFailed ? '⚠️ ' : ''}
+                  {isProcessing ? "⏳ " : isFailed ? "⚠️ " : ""}
                   {document.filename}
                 </button>
-              )
+              );
             })}
           </div>
         )}
@@ -140,7 +147,9 @@ export function InputBar({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className={`text-sm mr-2.5 transition cursor-pointer ${
-              selectedImage ? 'text-blue-500 font-semibold' : 'text-zinc-400 hover:text-zinc-650'
+              selectedImage
+                ? "text-blue-500 font-semibold"
+                : "text-zinc-400 hover:text-zinc-650"
             }`}
             title="Upload image"
           >
@@ -165,5 +174,5 @@ export function InputBar({
         </div>
       </form>
     </div>
-  )
+  );
 }

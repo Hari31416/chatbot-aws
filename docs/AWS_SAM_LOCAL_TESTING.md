@@ -84,9 +84,17 @@ Create a file named `env.json` in the root of your project:
     "Environment": "dev",
     "DYNAMODB_TABLE_NAME": "chatbot-table-dev",
     "S3_BUCKET_NAME": "chatbot-uploads-dev",
-    "LITELLM_MODEL": "openai/gpt-4o-mini",
-    "LITELLM_BASE_URL": "https://api.openai.com/v1",
-    "LITELLM_API_KEY": "sk-proj-your-api-key-here",
+    "LITELLM_MODEL": "openai/gpt_oss_120b",
+    "LITELLM_BASE_URL": "https://infer.e2enetworks.net/project/p-12449/genai/gpt_oss_120b/v1/",
+    "LITELLM_API_KEY": "your-api-key-here",
+    "LITELLM_VISION_MODEL": "gemini/gemini-3.1-flash-lite",
+    "LITELLM_EMBEDDING_MODEL": "gemini/gemini-embedding-2",
+    "S3_VECTOR_BUCKET_NAME": "chatbot-vectors-dev",
+    "S3_VECTOR_INDEX_NAME": "enterprise-kb",
+    "EMBEDDING_DIMENSION": 768,
+    "RAG_TOP_K": 5,
+    "CLERK_ISSUER": "https://clerk.chat.hari31416.in",
+    "CLERK_AUTHORIZED_PARTIES": "https://chat.hari31416.in",
     "LOG_LEVEL": "DEBUG"
   },
   "ChatbotIngestionWorkerFunction": {
@@ -95,6 +103,9 @@ Create a file named `env.json` in the root of your project:
     "S3_BUCKET_NAME": "chatbot-uploads-dev",
     "LITELLM_EMBEDDING_MODEL": "gemini/gemini-embedding-2",
     "LITELLM_API_KEY": "your-api-key-here",
+    "S3_VECTOR_BUCKET_NAME": "chatbot-vectors-dev",
+    "S3_VECTOR_INDEX_NAME": "enterprise-kb",
+    "EMBEDDING_DIMENSION": 768,
     "LOG_LEVEL": "DEBUG"
   }
 }
@@ -112,11 +123,14 @@ sam local start-api --env-vars env.json --port 8080
 
 - **Interactive Docs**: Visit `http://localhost:8080/docs` in your browser.
 - **Health Check**:
+
   ```bash
   curl http://localhost:8080/health
   # {"status":"ok"}
   ```
+
 - **Send a Chat Message**:
+
   ```bash
   curl -X POST http://localhost:8080/chat \
     -H "Content-Type: application/json" \
@@ -191,18 +205,24 @@ aws lambda invoke \
 If you are running DynamoDB Local or Minio on your host machine inside a Docker container network:
 
 1. **Find the Docker network name** running your local infrastructure (e.g. `chatbot-network`):
+
    ```bash
    docker network ls
    ```
+
 2. **Launch SAM Local** inside that same Docker network:
+
    ```bash
    sam local start-api --env-vars env.json --port 8080 --docker-network chatbot-network
    ```
+
 3. **Update your `env.json` endpoints** to target the docker service names instead of `localhost`:
+
    ```json
    "DYNAMODB_ENDPOINT_URL": "http://dynamodb-local:8000",
    "S3_ENDPOINT_URL": "http://minio-s3:9000",
-   "S3_FORCE_PATH_STYLE": "true"
+   "S3_FORCE_PATH_STYLE": "true",
+   "S3_VECTOR_ENDPOINT_URL": "http://minio-s3:9000"
    ```
 
 ---
@@ -211,10 +231,13 @@ If you are running DynamoDB Local or Minio on your host machine inside a Docker 
 
 - **Fast Rebuilds**: If you only make changes to your Python source code files (and have not introduced new dependencies in `pyproject.toml`), you can run `sam build` without the `--use-container` flag. It completes in a fraction of the time!
 - **Warm Containers**: To keep the Docker container running between API requests (improving response time significantly during testing), use the `--warm-containers` flag:
+
   ```bash
   sam local start-api --env-vars env.json --port 8080 --warm-containers EAGER
   ```
+
 - **Debug Port Integration**: You can attach VS Code or PyCharm remote debuggers by exposing port 5678 inside the SAM runtime:
+
   ```bash
   sam local start-api --env-vars env.json -d 5678
   ```

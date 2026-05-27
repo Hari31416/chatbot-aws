@@ -10,21 +10,21 @@ The infrastructure declared in this SAM template represents a modern, serverless
 
 The architecture separates standard transactional operations (user session routing, history fetching, and profile settings) from heavy streaming operations (real-time chat generation) and asynchronous document ingestion workflows. It leverages:
 
-1. **Amazon Cognito** for secure user authentication.
-2. **Amazon API Gateway HTTP APIs (v2)** with a Cognito JWT Authorizer for securing metadata and CRUD endpoints.
+1. **Clerk Authentication** for secure, serverless user sign-in and session management.
+2. **Amazon API Gateway HTTP APIs (v2)** to route metadata and CRUD requests to the backend FastAPI application.
 3. **AWS Lambda Function URLs (FURL)** configured with **AWS Lambda Web Adapter (LWA)** and `RESPONSE_STREAM` invocation mode to deliver ultra-low Time-to-First-Byte (TTFB) token streaming from LiteLLM.
-4. **Amazon DynamoDB** with a single-table composite key layout and a Global Secondary Index for highly efficient user conversation histories.
+4. **Amazon DynamoDB** with a single-table composite key layout and Global Secondary Index V2 (`UserConversationsIndexV2` with `INCLUDE` projection type) for highly efficient user conversation histories.
 5. **Amazon S3** for secure, private uploads alongside a public static S3 bucket for frontend React hosting.
 6. **Amazon SQS (Simple Queue Service)** with a Dead Letter Queue (DLQ) to decouple heavy RAG document ingestion flows, triggered via S3 Event Notifications under the `staging/` key prefix.
-7. **AWS Lambda Ingestion Worker Function** running asynchronously to parse files using AWS Textract, calculate vector embeddings using LiteLLM/Gemini, index them in S3 Vectors, and update DynamoDB.
+7. **AWS Lambda Ingestion Worker Function** running asynchronously to parse files using AWS Textract, calculate vector embeddings using Gemini, index them in **AWS S3 Vectors** indexes, and update DynamoDB.
 
 ```mermaid
 graph TD
-    Client[React Frontend - S3 Static Website] -->|Cognito Login| Cognito[AWS Cognito User Pool]
+    Client[React Frontend - S3 Static Website] -->|Clerk Login| Clerk[Clerk Auth Service]
     Client -->|Authenticated REST Requests /conversations| APIGateway[API Gateway HTTP API v2]
-    APIGateway -->|Cognito JWT Validated| LambdaRest[Lambda Backend - Mangum ASGI]
+    APIGateway -->|Application-Level Clerk JWT Verified| LambdaRest[Lambda Backend - Mangum ASGI]
     Client -->|Authenticated Chat Streams /chat/stream| FURL[Lambda Function URL]
-    FURL -->|Direct Stream - PyJWT Authenticated| LambdaStream[Lambda Backend - LWA Uvicorn]
+    FURL -->|Application-Level Clerk JWT Verified| LambdaStream[Lambda Backend - LWA Uvicorn]
 
     LambdaRest & LambdaStream -->|Read/Write History| DynamoDB[(DynamoDB Single-Table)]
     LambdaRest & LambdaStream -->|Secure LLM Keys| SSM[SSM Parameter Store]
@@ -45,16 +45,18 @@ graph TD
 
 To understand the infrastructure declared in `template.yaml`, it is important to analyze the operational mechanics of the key services under the hood:
 
-#### A. Amazon Cognito (Authentication Directory)
+#### A. Clerk Authentication (Identity Provider & Token Validation)
 
-Cognito acts as an OIDC-compliant Identity Provider (IdP).
+Clerk acts as the third-party OpenID Connect (OIDC) Identity Provider (IdP) for the platform.
 
-- **User Authentication:** The React frontend bypasses heavy SDK dependencies and communicates directly with Cognito’s public identity endpoints (`https://cognito-idp.<region>.amazonaws.com/`) using standard `fetch` with the `InitiateAuth` payload.
-- **Token Verification:** On login, Cognito yields a cryptographically signed **ID Token (JWT)**. API Gateway (for REST) and FastAPI (for streaming) do not perform network round-trips to Cognito to validate this token. Instead, they perform **offline cryptographic validation**:
-  1. They fetch Cognito’s JSON Web Key Set (JWKS) via `.well-known/jwks.json`.
-  2. They match the token header’s Key ID (`kid`) with Cognito’s public keys.
-  3. They decrypt the signature using RSA algorithms, validating that the token’s audience (`aud`) matches our User Pool Client ID, its issuer (`iss`) matches our User Pool URL, and it is not expired (`exp`).
-  4. Once validated, the user's Cognito `sub` (Subject ID) is extracted and used as the unique `user_id` for database records.
+- **User Authentication:** The React frontend utilizes Clerk's React SDK (`@clerk/react`) to handle login, registration, and session token rotation.
+- **Token Verification:** Upon login, Clerk generates a cryptographically signed **JSON Web Token (JWT)**. Both API Gateway (REST routes) and the direct Lambda Function URL (streaming routes) route requests containing the token in the `Authorization` header to the backend FastAPI application. FastAPI executes offline validation without sending network checks back to Clerk:
+  1. It fetches Clerk’s JSON Web Key Set (JWKS) via the OIDC well-known URI (e.g., `<clerk-issuer>/.well-known/jwks.json`).
+  2. It caches the keys in memory with a 1-hour expiration cache to minimize latency.
+  3. It inspects the JWT's unverified header for the Key ID (`kid`) and locates the corresponding public key from the JWKS list.
+  4. It decrypts and verifies the signature using the RS256 algorithm and checks claims: issuer (`iss`) must match `CLERK_ISSUER`, and the token must not be expired (`exp` claim checked with a 60-second leeway for clock skew).
+  5. It optionally validates the Authorized Party (`azp`) claim against `CLERK_AUTHORIZED_PARTIES` to ensure the request originated from an approved client website.
+  6. Upon successful verification, Clerk's unique subject identifier (`sub` claim) is extracted and used as the unique `user_id` to isolate database records and vector queries.
 
 #### B. AWS Lambda Web Adapter (LWA) & Function URLs (FURLs) for Response Streaming
 
@@ -69,7 +71,7 @@ Cognito acts as an OIDC-compliant Identity Provider (IdP).
   - Conversation Messages: `pk = CONV#<id>` and `sk = MSG#<timestamp>#<message_id>`
   - Conversation Cache Context: `pk = CONV#<id>` and `sk = CTX`
     This enables retrieving a conversation metadata and message logs in a single high-speed query operation instead of making multiple table joins.
-- **Global Secondary Indexes (GSIs):** DynamoDB only permits high-speed queries on the partition key `pk`. Querying conversations by `user_id` would normally require a full **Table Scan**—a slow and expensive operation that parses every single record in the database. `UserConversationsIndex` mirrors the table, making `user_id` the alternate partition key and `sk` the sort key. Under the hood, AWS automatically replicates data from the main table partition to the GSI asynchronously, allowing instant, sorted conversation listing for a user.
+- **Global Secondary Indexes (GSIs):** DynamoDB only permits high-speed queries on the partition key `pk`. Querying conversations by `user_id` would normally require a full **Table Scan**—a slow and expensive operation that parses every single record in the database. `UserConversationsIndexV2` mirrors the table, making `user_id` the alternate partition key and `sk` the sort key. Under the hood, AWS automatically replicates data from the main table partition to the GSI asynchronously, allowing instant, sorted conversation listing for a user. Crucially, `UserConversationsIndexV2` is configured with `ProjectionType: INCLUDE` and projects only the necessary fields (`conversation_id`, `name`, `created_at`, `updated_at`) to optimize read/write efficiency and minimize secondary storage footprint.
 - **TimeToLive (TTL):** To avoid storing stale data, DynamoDB's TTL scanner runs continuously in the background. When it identifies an item where the numeric `ttl` attribute (Unix timestamp) is lower than the current time, it marks the item as expired and purges it from the storage disks within 48 hours without consuming any provisioned WCU throughput.
 
 #### D. S3 Static Hosting & Presigned URLs
@@ -91,6 +93,14 @@ Cognito acts as an OIDC-compliant Identity Provider (IdP).
 - **Visibility & Timeouts Alignment:** The worker function is configured with a **120-second timeout** to process large PDFs or documents via Textract. To ensure the queue doesn't release the message to a duplicate worker during this heavy processing window, the SQS Queue is configured with a **180-second Visibility Timeout**. This 1.5x timeout buffer prevents duplicate ingestion runs and race conditions.
 - **SQS Trigger Integration:** The worker binds to SQS with a `BatchSize: 1` trigger configuration, executing one ingestion job at a time to prevent CPU resource thrashing and keep execution within safe boundaries.
 
+#### G. Amazon S3 Vectors (Serverless Vector Search Database)
+
+Instead of running dedicated and costly vector database instances, the platform leverages native AWS S3 Vectors (`AWS::S3Vectors::VectorBucket` and `AWS::S3Vectors::Index` resources).
+
+- **Vector Bucket:** A specialized storage partition (`ChatbotVectorBucket`) with standard AES256 server-side encryption enabled to store dense embedding coordinate maps.
+- **Vector Index:** A similarity search index (`ChatbotVectorIndex`) bound to the vector bucket. It specifies a 768-dimensional float32 coordinate footprint, uses a `cosine` distance metric for calculating semantic similarity, and declares `text` as a non-filterable metadata key (meaning vector search returns the source chunk text directly, while filtering can still be applied on other metadata keys such as `user_id` or `source_doc`).
+- **Serverless Search:** Similarity searches query this index via `s3vectors:QueryVectors`, utilizing filter conditions (e.g., `{"user_id": user_id}`) to restrict searches strictly to the current user's documents.
+
 ---
 
 ## 2. Global Headers & Version Declarations
@@ -101,13 +111,13 @@ Transform: AWS::Serverless-2016-10-31
 Description: Serverless Chatbot API deployed on AWS Lambda, DynamoDB, S3, and SSM.
 ```
 
-### Explanation:
+### Explanation
 
 - **`AWSTemplateFormatVersion: '2010-09-09'`**: Identifies the version of the CloudFormation template structure. This is the latest standard template version.
 - **`Transform: AWS::Serverless-2016-10-31`**: This line is critical; it tells CloudFormation that this is an **AWS Serverless Application Model (SAM)** template. This transform expands simplified serverless resource declarations (like `AWS::Serverless::Function` and `AWS::Serverless::HttpApi`) into fully fleshed-out low-level CloudFormation resources (like `AWS::Lambda::Function`, `AWS::ApiGatewayV2::Api`, and standard IAM execution roles) during the build phase.
 - **`Description`**: A text description of the stack, visible in the CloudFormation Console.
 
-### Alternatives:
+### Alternatives
 
 - **Alternative:** Direct CloudFormation templates.
   - _Why SAM is better:_ Standard CloudFormation would require declaring verbose IAM execution policies, explicit Lambda trust relationships, API Gateway route mappings, and HTTP integration contracts manually, increasing the template size by 300%.
@@ -126,8 +136,8 @@ Parameters:
     Description: Deployment environment (dev, staging, prod)
 ```
 
-- **Explanation:** Dictates the environment suffix for naming resources (e.g. `chatbot-table-prod`).
-- **Why it was needed:** Isolates database tables, S3 buckets, and Cognito User Pools so staging environments or parallel developers do not corrupt production data.
+- **Explanation:** Dictates the environment suffix for naming resources (e.g., `chatbot-table-prod`).
+- **Why it was needed:** Isolates database tables, S3 buckets, and S3 Vector buckets so staging environments or parallel developers do not corrupt production data.
 - **Alternatives:** Hardcoding names. _Alternative is a major anti-pattern as it makes multi-environment setups impossible._
 
 ```yaml
@@ -151,6 +161,36 @@ LiteLlmVisionModel:
 - **Explanation:** Specifies the vision model mapped to `/chat/image` requests.
 - **Why it was needed:** Vision prompts represent a separate class of LLM requests requiring specific pricing profiles. Hardcoding makes model swaps slow.
 - **Alternatives:** Reusing `LiteLlmModel` for both text and image queries. _Rejected because many text-optimized models do not support multimodal image inputs._
+
+```yaml
+LiteLlmEmbeddingModel:
+  Type: String
+  Default: gemini/gemini-embedding-2
+  Description: Embedding model to use for RAG via LiteLLM
+```
+
+- **Explanation:** Specifies the dense embedding model used to calculate RAG query and chunk coordinates.
+- **Why it was needed:** Permits swappable embedding providers and model sizes (e.g. text-embedding-3-small vs gemini-embedding-2) to balance pricing and search quality.
+
+```yaml
+S3VectorBucketName:
+  Type: String
+  Default: chatbot-vectors-prod
+  Description: S3 Vectors bucket name for RAG embeddings
+```
+
+- **Explanation:** Specifies the name of the AWS S3 Vector bucket partition.
+- **Why it was needed:** Defines where similarity-indexed chunks are stored. Separating dev, staging, and prod buckets isolates corporate knowledge bases.
+
+```yaml
+S3VectorIndexName:
+  Type: String
+  Default: enterprise-kb
+  Description: S3 Vectors index name for RAG embeddings
+```
+
+- **Explanation:** Establishes the name of the vector search index.
+- **Why it was needed:** Allows referencing the vector collection from both backend worker (writing vectors) and REST backend (querying vectors).
 
 ```yaml
 ContextTtlSeconds:
@@ -186,6 +226,43 @@ LogLevel:
 - **Why it was needed:** Allows toggling verbose `DEBUG` logs in staging for troubleshooting while keeping production on `INFO` to save log storage costs.
 - **Alternatives:** Hardcoded logger config in Python code.
 
+```yaml
+ClerkIssuer:
+  Type: String
+  Default: "https://accurate-moccasin-43.clerk.accounts.dev/"
+  Description: Clerk OIDC Issuer URL
+```
+
+- **Explanation:** Configures the OIDC Issuer URL of the Clerk authentication instance.
+- **Why it was needed:** Allows FastAPI token validation to verify that incoming JWT tokens are issued by the correct Clerk application.
+
+```yaml
+ClerkJwksUrl:
+  Type: String
+  Default: ""
+  Description: Clerk JWKS URL (optional)
+```
+
+- **Explanation:** Allows manually overriding the location of Clerk's JWKS file. If empty, the backend automatically infers it from `ClerkIssuer`.
+
+```yaml
+ClerkAuthorizedParties:
+  Type: String
+  Default: ""
+  Description: Clerk Authorized Parties (optional, comma-separated allowed origins)
+```
+
+- **Explanation:** Configures client origins (like our frontend URL) allowed in the token's `azp` claim. Prevents request spoofing from unauthorized websites.
+
+```yaml
+RagTopK:
+  Type: Number
+  Default: 3
+  Description: Number of retrieved chunks for RAG context
+```
+
+- **Explanation:** Controls how many semantic chunks are retrieved from the vector index and injected into the LLM's prompt context during a query.
+
 ---
 
 ## 4. Globals Block
@@ -202,7 +279,7 @@ Globals:
       - arm64
 ```
 
-### Explanation:
+### Explanation
 
 - **`Timeout: 30`**: Limits execution of all functions to 30 seconds.
   - _Why:_ Large LLM responses or image uploads can easily exceed API Gateway's default 29-second or Lambda's 3-second timeout limit. 30 seconds provides a comfortable margin for LLM chunk streaming and cold starts.
@@ -226,19 +303,30 @@ Environment:
     LITELLM_MODEL: !Ref LiteLlmModel
     LITELLM_BASE_URL: !Ref LiteLlmBaseUrl
     LITELLM_VISION_MODEL: !Ref LiteLlmVisionModel
+    LITELLM_EMBEDDING_MODEL: !Ref LiteLlmEmbeddingModel
     LITELLM_VISION_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
+    LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
+    S3_VECTOR_BUCKET_NAME: !Ref S3VectorBucketName
+    S3_VECTOR_INDEX_NAME: !Ref S3VectorIndexName
+    EMBEDDING_DIMENSION: 768
+    RAG_TOP_K: !Ref RagTopK
+    RAG_CHUNK_SIZE: 800
+    RAG_CHUNK_OVERLAP: 80
     CONTEXT_TTL_SECONDS: !Ref ContextTtlSeconds
     MAX_HISTORY_MESSAGES: 10
     LITELLM_API_KEY_PARAMETER: /chatbot/litellm_api_key
     LOG_LEVEL: !Ref LogLevel
-    COGNITO_USER_POOL_ID: !Ref ChatbotUserPool
-    COGNITO_CLIENT_ID: !Ref ChatbotUserPoolClient
+    CLERK_ISSUER: !Ref ClerkIssuer
+    CLERK_JWKS_URL: !Ref ClerkJwksUrl
+    CLERK_AUTHORIZED_PARTIES: !Ref ClerkAuthorizedParties
 ```
 
-### Explanation:
+### Explanation
 
-- **`!Ref` mappings**: Dynamically resolves physical names of resources generated at deploy-time (e.g. mapping `!Ref ChatbotTable` to `chatbot-table-prod`).
-- **`LITELLM_API_KEY_PARAMETER` & `LITELLM_VISION_API_KEY_PARAMETER`**: Instead of passing secret API keys in plain text (which is a critical security vulnerability), these point to path references in **AWS Systems Manager (SSM) Parameter Store** (`/chatbot/litellm_api_key`). The backend fetches and decrypts keys at runtime via boto3.
+- **`!Ref` mappings**: Dynamically resolves physical names of resources generated at deploy-time (e.g., mapping `!Ref ChatbotTable` to `chatbot-table-prod`).
+- **`LITELLM_API_KEY_PARAMETER`, `LITELLM_VISION_API_KEY_PARAMETER`, & `LITELLM_EMBEDDING_API_KEY_PARAMETER`**: Instead of passing secret API keys in plain text (which is a critical security vulnerability), these point to path references in **AWS Systems Manager (SSM) Parameter Store** (e.g., `/chatbot/litellm_api_key`). The backend fetches and decrypts keys at runtime via `boto3`.
+- **RAG & S3 Vector Parameters**: Injects vector store configurations (`S3_VECTOR_BUCKET_NAME`, `S3_VECTOR_INDEX_NAME`, `EMBEDDING_DIMENSION`, `RAG_TOP_K`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`) so that both the backend FastAPI service and background worker utilize identical chunking, embedding, and indexing settings.
+- **Clerk Parameters**: Injects Clerk OIDC configurations (`CLERK_ISSUER`, `CLERK_JWKS_URL`, `CLERK_AUTHORIZED_PARTIES`) to execute OIDC verification at the application layer.
 - **Alternatives:** Passing raw keys via `template.yaml`.
   - _Warning:_ Avoid this alternative; environment variables are visible in plaintext in the AWS Console, SAM CLI logs, and AWS CloudTrail logs.
 
@@ -278,10 +366,29 @@ Policies:
       ParameterName: chatbot/litellm_api_key
   - SSMParameterReadPolicy:
       ParameterName: chatbot/litellm_vision_api_key
+  - Statement:
+      - Effect: Allow
+        Action:
+          - s3vectors:PutVectors
+          - s3vectors:QueryVectors
+          - s3vectors:GetVectors
+          - s3vectors:ListIndexes
+          - s3vectors:DeleteVectors
+        Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
+      - Effect: Allow
+        Action:
+          - s3vectors:ListVectorBuckets
+        Resource: "*"
+      - Effect: Allow
+        Action:
+          - textract:DetectDocumentText
+          - textract:StartDocumentTextDetection
+          - textract:GetDocumentTextDetection
+        Resource: "*"
 ```
 
-- **Explanation:** Grants the Lambda execution role precise CRUD access to the S3 bucket, DynamoDB table, and read access to the SSM keys.
-- **Why it was needed:** Follows the **Principle of Least Privilege**. The Lambda has access only to its specific resources.
+- **Explanation:** Grants the Lambda execution role precise CRUD access to the staging S3 bucket, DynamoDB single table, and read access to the SSM keys. Additionally, it grants custom IAM permissions to interact with AWS S3 Vectors (indexing and querying vectors for specific bucket resources) and AWS Textract (triggering document text detection).
+- **Why it was needed:** Follows the **Principle of Least Privilege**. The Lambda has access only to its specific resources. Textract and S3 Vector bucket listings require wildcard resource targets (`"*"`) because they do not support resource-level restrictions, but the rest are locked down strictly.
 - **Alternatives:** Custom inline IAM Roles with `Resource: "*"` wildcard actions (unsecured).
 
 ### Lambda Web Adapter Specific Config:
@@ -346,13 +453,11 @@ Events:
       Path: /health
       Method: GET
       ApiId: !Ref ChatbotHttpApi
-      Auth:
-        Authorizer: NONE
 ```
 
 - **Explanation:** Maps proxy routes (`GET`, `POST`, `PUT`, `DELETE` under `/{proxy+}`) to API Gateway.
 - **Why it was split:** Explicitly sets up `GetApiEvent`, `PostApiEvent`, etc. Bypassing an explicit `OPTIONS` mapping allows API Gateway to consume and respond to browser CORS preflight requests natively without hitting the backend Lambda, reducing costs and preventing CORS errors.
-- **`/health` Auth Bypass**: The `/health` route is marked with `Authorizer: NONE` to support public heartbeat monitoring from the React client.
+- **Unified Application-Level Authentication**: Since authorization is checked at the application layer via custom JWT validation middleware within the FastAPI backend (for both REST endpoints and streaming FURL endpoints), we do not need to configure an edge-level authorizer on API Gateway, making the routing architecture simpler and unified.
 
 ---
 
@@ -366,7 +471,7 @@ ChatbotBackendFunctionLogGroup:
     RetentionInDays: 7
 ```
 
-### Explanation:
+### Explanation
 
 - **`RetentionInDays: 7`**: Explicitly expires Log streams after **7 days**.
 - **Why it was needed:** By default, Lambda-created log groups are set to "Never Expire". If left unattended, high-volume chatbot logging will result in massive CloudWatch storage charges ($0.03 per GB/month). Declaring this resource inside SAM overrides default behavior, keeping log sizes bounded.
@@ -397,23 +502,12 @@ ChatbotHttpApi:
 - **Explanation:** Declares the API Gateway HTTP API v2 resource.
 - **`CorsConfiguration`**: Sets up global CORS policies for HTTP API gateways, authorizing standard REST methods and headers from different origins.
 
-### Cognito API Gateway Authorizer:
+### Application-Level Authorization Validation:
 
-```yaml
-Auth:
-  DefaultAuthorizer: CognitoAuthorizer
-  Authorizers:
-    CognitoAuthorizer:
-      IdentitySource: "$request.header.Authorization"
-      JwtConfiguration:
-        Audience:
-          - !Ref ChatbotUserPoolClient
-        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${ChatbotUserPool}"
-```
+In this template, API Gateway does not declare a default edge authorizer. Instead, token verification is handled entirely within backend application code using a custom FastAPI OIDC token validation dependency.
 
-- **Explanation:** Establishes edge-level request authorization.
-- **`IdentitySource`**: Declares that API Gateway must parse incoming JWTs from the `Authorization` header.
-- **`JwtConfiguration`**: Directly integrates with Cognito User Pools. API Gateway checks the JWT's signature against Cognito's cryptographic keys and validates token expiry. Unauthenticated requests are rejected immediately at the AWS edge before invoking or billing the Lambda.
+- **Unified Auth Logic:** Both API Gateway REST endpoints and Lambda Function URL (FURL) streaming endpoints route unauthenticated traffic directly to the Lambda function. The FastAPI application decodes, caches, and verifies Clerk JWT signatures.
+- **Why it was designed this way:** Bypassing API Gateway's built-in Cognito authorizer allows a single, unified codebase to secure both the REST API and the unbuffered streaming FURL paths. This reduces configuration complexity, avoids duplicating OIDC configs in AWS, and guarantees consistent authentication behavior across all request pathways.
 
 ---
 
@@ -456,23 +550,29 @@ KeySchema:
 
 ```yaml
 GlobalSecondaryIndexes:
-  - IndexName: UserConversationsIndex
+  - IndexName: UserConversationsIndexV2
     KeySchema:
       - AttributeName: user_id
         KeyType: HASH
       - AttributeName: sk
         KeyType: RANGE
     Projection:
-      ProjectionType: ALL
+      ProjectionType: INCLUDE
+      NonKeyAttributes:
+        - conversation_id
+        - name
+        - created_at
+        - updated_at
     ProvisionedThroughput:
       ReadCapacityUnits: 5
       WriteCapacityUnits: 5
 ```
 
-- **Explanation:** Defines a secondary querying index.
-- **Why it was needed:** In standard composite key design, you cannot query items on attributes that are not part of the primary key without triggering a highly expensive Table Scan. Adding `UserConversationsIndex` allows the application to query and retrieve conversations belonging to a specific `user_id` sorted by timestamp `sk` with sub-millisecond latency.
+- **Explanation:** Defines a secondary queryable index.
+- **Why it was needed:** In standard composite key design, you cannot query items on attributes that are not part of the primary key without triggering a highly expensive Table Scan. Adding `UserConversationsIndexV2` allows the application to query and retrieve conversation sessions belonging to a specific `user_id` sorted by timestamp `sk` with sub-millisecond latency.
+- **Why `INCLUDE` is preferred over `ALL`:** By projecting only essential metadata (`conversation_id`, `name`, `created_at`, `updated_at`) and omitting bulky message histories or document text chunks, this index reduces GSI storage overhead and prevents runaway write capacity charges whenever main records are updated.
 
-### TTL Configuration:
+### TTL Configuration
 
 ```yaml
 TimeToLiveSpecification:
@@ -567,7 +667,46 @@ ChatbotFrontendBucketPolicy:
 
 ---
 
-## 11. AWS SQS Queues for RAG Ingestion
+## 11. AWS S3 Vectors Infrastructure
+
+The template declares two dedicated serverless vector store resources in ap-south-1:
+
+```yaml
+# S3 Vectors Bucket
+ChatbotVectorBucket:
+  Type: AWS::S3Vectors::VectorBucket
+  Properties:
+    VectorBucketName: !Ref S3VectorBucketName
+    EncryptionConfiguration:
+      SseType: "AES256"
+
+# S3 Vectors Similarity Index
+ChatbotVectorIndex:
+  Type: AWS::S3Vectors::Index
+  DependsOn: ChatbotVectorBucket
+  Properties:
+    IndexName: !Ref S3VectorIndexName
+    VectorBucketName: !Ref S3VectorBucketName
+    DataType: "float32"
+    Dimension: 768
+    DistanceMetric: "cosine"
+    MetadataConfiguration:
+      NonFilterableMetadataKeys:
+        - "text"
+```
+
+### Explanation
+
+- **`ChatbotVectorBucket`**: Configures a dedicated serverless bucket for embedding coordinate storage. `AES256` default encryption ensures compliance and security at rest.
+- **`ChatbotVectorIndex`**: Configures a vector search index linked to the bucket.
+  - **`Dimension: 768`**: Matches the output footprint of Gemini embedding models.
+  - **`DistanceMetric: cosine`**: Selected for angular distance semantic similarity comparisons.
+  - **`NonFilterableMetadataKeys: [text]`**: Restricts keyword filters on the raw `text` chunk context (improving index speed), keeping query filters scoped to metadata coordinates like `user_id` or `source_doc`.
+- **`DependsOn: ChatbotVectorBucket`**: Guarantees that the bucket exists before CloudFormation begins constructing the similarity index.
+
+---
+
+## 12. AWS SQS Queues for RAG Ingestion
 
 Decoupling ingestion requires queues to buffer objects uploaded to S3 and process them asynchronously.
 
@@ -590,7 +729,8 @@ IngestionQueue:
       maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
 ```
 
-### Explanation:
+### Explanation
+
 - **`IngestionDLQ`**: Standard SQS queue set up as a Dead Letter Queue.
   - **`MessageRetentionPeriod: 1209600`** (14 days): Retains failed messages for two weeks (the maximum SQS allows), giving developers ample time to inspect, troubleshoot, and re-drive raw message payloads that failed processing.
 - **`IngestionQueue`**: The primary job buffer.
@@ -619,13 +759,14 @@ IngestionQueuePolicy:
               aws:SourceAccount: !Ref AWS::AccountId
 ```
 
-### Explanation:
+### Explanation
+
 - **`IngestionQueuePolicy`**: Standard Queue Policy that authorizes S3's service principal (`s3.amazonaws.com`) to call `sqs:SendMessage` on our queue.
   - **`Condition`**: Strictly locks permissions using `SourceArn` matching our private uploads bucket name and `SourceAccount` matching the AWS Account ID. This prevents other S3 buckets in other AWS accounts from posting messages to our ingestion worker queue.
 
 ---
 
-## 12. Ingestion Worker Lambda Function
+## 13. Ingestion Worker Lambda Function
 
 This worker process consumes messages from the SQS queue and handles the end-to-end extraction, chunking, embedding, vector database indexing, and DynamoDB status updates completely out-of-band.
 
@@ -655,6 +796,7 @@ ChatbotIngestionWorkerFunction:
               - s3vectors:QueryVectors
               - s3vectors:GetVectors
               - s3vectors:ListIndexes
+              - s3vectors:DeleteVectors
             Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
           - Effect: Allow
             Action:
@@ -674,14 +816,15 @@ ChatbotIngestionWorkerFunction:
           BatchSize: 1 # Process one file at a time
 ```
 
-### Explanation:
+### Explanation
+
 - **`Handler: app.worker.handler`**: Sets the entry point to the background worker module, which processes SQS records instead of serving ASGI HTTP routes.
 - **`Timeout: 120`**: Configures a generous 2-minute timeout to allow the execution context to download large files from S3, wait for Textract processing, split text chunks, generate embeddings, and upsert them.
 - **`Policies`**: Follows least-privilege security by granting:
   - **`SQSPollerPolicy`**: Authorizes polling and deleting processed messages from `IngestionQueue`.
   - **`S3CrudPolicy`**: Grants permission to fetch staging files and delete them after successful ingestion.
   - **`DynamoDBCrudPolicy`**: Authorizes updating document registry status in the single DynamoDB table.
-  - **`s3vectors` and `textract` policies**: Grants scoped permissions to interact with the serverless S3 Vector database indexes and AWS Textract OCR services.
+  - **`s3vectors` and `textract` policies**: Grants scoped permissions to interact with the serverless S3 Vector database indexes (including vector insertions and deletions) and AWS Textract OCR services.
 - **`SQSTrigger`**: Maps the SQS event source.
   - **`BatchSize: 1`**: Instructs Lambda to invoke the function with exactly one message at a time. This isolates failures (a toxic file won't fail an entire batch of uploads) and bounds memory footprint.
 
@@ -693,61 +836,9 @@ ChatbotIngestionWorkerFunctionLogGroup:
     RetentionInDays: 7
 ```
 
-### Explanation:
+### Explanation
+
 - **`ChatbotIngestionWorkerFunctionLogGroup`**: Explicitly caps worker logs retention to **7 days** to ensure diagnostic worker outputs do not quietly inflate CloudWatch storage costs.
-
----
-
-## 13. AWS Cognito Authentication User Pools
-
-```yaml
-ChatbotUserPool:
-  Type: AWS::Cognito::UserPool
-  Properties:
-    UserPoolName: !Sub chatbot-users-${Environment}
-    UsernameAttributes:
-      - email
-    AutoVerifiedAttributes:
-      - email
-```
-
-- **Explanation:** Provisions Cognito user directory.
-- **`UsernameAttributes: [email]`**: Allows users to log in directly using email instead of complex username strings.
-- **`AutoVerifiedAttributes: [email]`**: Auto-sends email validation messages upon signup.
-
-```yaml
-Policies:
-  PasswordPolicy:
-    MinimumLength: 8
-    RequireLowercase: false
-    RequireNumbers: false
-    RequireSymbols: false
-    RequireUppercase: false
-Schema:
-  - Name: email
-    AttributeDataType: String
-    Required: true
-    Mutable: true
-```
-
-- **Explanation:** Governs sign-up configurations. Password policy restrictions are relaxed to simplify demo and testing access. Email is marked as a mandatory immutable attribute.
-
-```yaml
-ChatbotUserPoolClient:
-  Type: AWS::Cognito::UserPoolClient
-  Properties:
-    ClientName: !Sub chatbot-client-${Environment}
-    UserPoolId: !Ref ChatbotUserPool
-    GenerateSecret: false
-    ExplicitAuthFlows:
-      - ALLOW_USER_PASSWORD_AUTH
-      - ALLOW_REFRESH_TOKEN_AUTH
-      - ALLOW_USER_SRP_AUTH
-```
-
-- **Explanation:** Registers the React frontend application with Cognito.
-- **`GenerateSecret: false`**: Critical security property for Single Page Applications (SPAs). Client secrets cannot be stored securely inside browser JavaScript bundles; thus, secrets are disabled.
-- **`ExplicitAuthFlows`**: Configures the direct authentication flows.
 
 ---
 
@@ -789,36 +880,26 @@ FrontendBucket:
 
 - **Purpose:** S3 bucket identifier consumed by `deploy-frontend.sh` to upload Vite production build files.
 
-```yaml
-UserPoolId:
-  Description: "AWS Cognito User Pool ID"
-  Value: !Ref ChatbotUserPool
-UserPoolClientId:
-  Description: "AWS Cognito User Pool Client ID"
-  Value: !Ref ChatbotUserPoolClient
-```
-
-- **Purpose:** Unique ids consumed by Cognito's raw HTTP auth client on the frontend React App to resolve signup and login paths.
-
 ## 15. Comprehensive AWS Service Directory & Integration Matrix
 
 This section provides a summary of all active AWS services utilized in the chatbot application, explaining why they are included and how they connect with other resources in the stack.
 
 ### Service Matrix
 
-| AWS Service                              | Core Purpose / Role in Stack                                                                               | Interconnection & Integration Points                                                                                                                                   |
-| :--------------------------------------- | :--------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Amazon Cognito (User Pools & Client)** | Serverless user authentication, token storage, email validation, and registration management.              | React frontend authenticates directly against Cognito public endpoints. API Gateway integrates with Cognito User Pool at the edge to authorize incoming REST requests. |
-| **Amazon API Gateway (HTTP API v2)**     | Low-latency, cost-effective API entry point that secures transactional CRUD endpoints.                     | Receives REST calls from the client, validates Cognito JWTs, and routes authenticated queries to the Lambda backend via the Mangum ASGI adapter.                       |
-| **AWS Lambda (arm64 Graviton)**          | Serverless compute layer executing backend FastAPI logic. Graviton2 is selected for cost-efficiency.       | Invoked by both API Gateway and Lambda Function URLs. Interfaces with SSM Parameter Store for API keys, writes/reads data in DynamoDB, and uploads attachments to S3.  |
-| **AWS Lambda Function URL (FURL)**       | Exposes high-speed, direct HTTP endpoints configured for chunked streaming.                                | Bridges streaming routes (`/chat/stream`) directly from the React frontend to the backend Lambda LWA server, bypassing API Gateway limits.                             |
-| **Amazon DynamoDB**                      | Fast, flexible NoSQL database storing user sessions, metadata, and history under a single-table design.    | Accessed by Lambda functions to load conversation indexes, write user and assistant responses, and clear expired cache records.                                        |
-| **Amazon S3 (Uploads Bucket)**           | Encrypted, private storage for image attachments. Features automatic 7-day lifecycles to conserve storage. | Lambda uploads image bytes here during `/chat/image` requests and generates temporary, signed S3 presigned URLs for client rendering. Also acts as an ingestion staging directory under the `/staging/` prefix. |
-| **Amazon S3 (Frontend Bucket)**          | Hosts Vite + React production build files natively as a static HTTP web site.                              | Read publicly by web browsers to load the UI. The loaded React client submits prompt requests to API Gateway and Lambda Function URLs.                                 |
-| **AWS SSM Parameter Store**              | Secure configuration storage. KMS-encrypts sensitive LLM and vision API keys.                              | Lambda execution role reads this parameters at container cold-start, fetching and decrypting keys for LiteLLM.                                                         |
-| **Amazon CloudWatch Logs**               | Centralized application logging and diagnostic error monitoring.                                           | Automatically captures stdout, debug records, and runtime exceptions from Lambda functions. Set to 7-day retention.                                                    |
-| **Amazon SQS (Simple Queue Service)**    | Asymmetric decoupling queue that buffers staging document uploads.                                        | Receives event notifications from S3 when objects land under the `staging/` key prefix. Triggers the background worker function asynchronously. Redrives to DLQ on failure. |
-| **AWS Lambda Ingestion Worker**          | Decoupled execution worker Lambda handling document text extraction and embedding vector RAG indexing.     | Triggered automatically by SQS queue events. Integrates with S3 for file reads/writes, Textract for OCR, S3 Vectors for indexing, and DynamoDB for status updates.     |
+| AWS Service                           | Core Purpose / Role in Stack                                                                                     | Interconnection & Integration Points                                                                                                                                                                            |
+| :------------------------------------ | :--------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Clerk Authentication**              | Third-party serverless user authentication, session token distribution, and login/registration manager.          | React frontend authenticates against Clerk. The backend FastAPI application validates Clerk JWTs at the application layer using OIDC JWKS public keys.                                                          |
+| **Amazon API Gateway (HTTP API v2)**  | Low-latency, cost-effective API entry point routing REST CRUD requests to the backend Lambda function.           | Receives REST calls from the client, handles CORS preflights, and routes authenticated queries to the Lambda backend via the Mangum ASGI adapter.                                                               |
+| **AWS Lambda (arm64 Graviton)**       | Serverless compute layer executing backend FastAPI logic. Graviton architecture is selected for cost-efficiency. | Invoked by both API Gateway and Lambda Function URLs. Interfaces with SSM Parameter Store for API keys, writes/reads data in DynamoDB, and uploads attachments to S3.                                           |
+| **AWS Lambda Function URL (FURL)**    | Exposes high-speed, direct HTTP endpoints configured for chunked streaming.                                      | Bridges streaming routes (`/chat/stream`) directly from the React frontend to the backend Lambda LWA server, bypassing API Gateway limits.                                                                      |
+| **Amazon DynamoDB**                   | Fast, flexible NoSQL database storing user sessions, metadata, and history under a single-table design.          | Accessed by Lambda functions to load conversation indexes, write user and assistant responses, and clear expired cache records.                                                                                 |
+| **Amazon S3 (Uploads Bucket)**        | Encrypted, private storage for image attachments. Features automatic 7-day lifecycles to conserve storage.       | Lambda uploads image bytes here during `/chat/image` requests and generates temporary, signed S3 presigned URLs for client rendering. Also acts as an ingestion staging directory under the `/staging/` prefix. |
+| **Amazon S3 (Frontend Bucket)**       | Hosts Vite + React production build files natively as a static HTTP web site.                                    | Read publicly by web browsers to load the UI. The loaded React client submits prompt requests to API Gateway and Lambda Function URLs.                                                                          |
+| **AWS SSM Parameter Store**           | Secure configuration storage. KMS-encrypts sensitive LLM and vision API keys.                                    | Lambda execution role reads these parameters at container cold-start, fetching and decrypting keys for LiteLLM.                                                                                                 |
+| **Amazon CloudWatch Logs**            | Centralized application logging and diagnostic error monitoring.                                                 | Automatically captures stdout, debug records, and runtime exceptions from Lambda functions. Set to 7-day retention.                                                                                             |
+| **Amazon SQS (Simple Queue Service)** | Asymmetric decoupling queue that buffers staging document uploads.                                               | Receives event notifications from S3 when objects land under the `staging/` key prefix. Triggers the background worker function asynchronously. Redrives to DLQ on failure.                                     |
+| **AWS S3 Vectors Index**              | Serverless similarity search database storing dense coordinate chunk vectors.                                    | Declaratively configured (`AWS::S3Vectors` resources). Queried by backend for RAG retrieval and updated by worker function for indexing.                                                                        |
+| **AWS Lambda Ingestion Worker**       | Decoupled execution worker Lambda handling document text extraction and embedding vector RAG indexing.           | Triggered automatically by SQS queue events. Integrates with S3 for file reads/writes, Textract for OCR, S3 Vectors for indexing, and DynamoDB for status updates.                                              |
 
 ### Architectural Integration Map
 
@@ -829,16 +910,16 @@ The diagram below illustrates how requests flow dynamically through these servic
 Browser ──(Loads Index/JS)──► S3 Frontend Bucket (Public Read)
 
 [ SECURE USER REGISTRATION & AUTH ]
-Browser ──(SignUp/Login)────► AWS Cognito (ID Token Returned)
+Browser ──(SignUp/Login)────► Clerk Auth Service (JWT Token Returned)
 
 [ STANDARD TRANSACTIONAL ROUTE ]
-Browser ──(Header: JWT)─────► API Gateway ──(Cognito Validate)──► Lambda (Mangum) ──► DynamoDB Single-Table / S3 Private Uploads
+Browser ──(Header: JWT)─────► API Gateway ──► Lambda (Mangum/Clerk Validate) ──► DynamoDB Single-Table / S3 Private Uploads
 
 [ HIGH-SPEED CHUNK STREAMING ROUTE ]
-Browser ──(Header: JWT)─────► Lambda Function URL (Streaming) ──► Lambda (LWA/PyJWT) ──► LiteLLM / Gemini ──► DynamoDB Update
+Browser ──(Header: JWT)─────► Lambda Function URL (Streaming) ──► Lambda (LWA/Clerk Validate) ──► LiteLLM / Gemini ──► DynamoDB Update
 
 [ DECOUPLED ASYNCHRONOUS DOCUMENT INGESTION ROUTE ]
-Browser ──(Header: JWT)─────► API Gateway ──(Cognito Validate)──► Lambda (Mangum) ──► Uploads to S3 (/staging/)
+Browser ──(Header: JWT)─────► API Gateway ──► Lambda (Mangum/Clerk Validate) ──► Uploads to S3 (/staging/)
                                                                                            │
                                                                                     (S3 Notification)
                                                                                            │

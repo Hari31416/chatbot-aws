@@ -820,10 +820,6 @@ export function App() {
         isFunctionOnline={isFunctionOnline}
         recheckFunctionHealth={recheckFunctionHealth}
         isCheckingFunction={isCheckingFunction}
-        apiBaseUrl={apiBaseUrl}
-        setApiBaseUrl={setApiBaseUrl}
-        functionUrl={functionUrl}
-        setFunctionUrl={setFunctionUrl}
         userId={userId}
       />
 

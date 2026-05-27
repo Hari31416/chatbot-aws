@@ -307,7 +307,7 @@ export function ChatFeed({
               onClick={() =>
                 setInputText("How does AWS Lambda work in a serverless app?")
               }
-              className="p-3 text-xs border border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg shadow-xs hover:bg-zinc-50 transition text-left w-full cursor-pointer"
+              className="p-3 text-xs border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg shadow-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 transition text-left w-full cursor-pointer"
             >
               Cloud Architecture Lambda
             </button>
@@ -317,7 +317,7 @@ export function ChatFeed({
                   "Explain how an S3 bucket hosts static React applications.",
                 )
               }
-              className="p-3 text-xs border border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg shadow-xs hover:bg-zinc-50 transition text-left w-full cursor-pointer"
+              className="p-3 text-xs border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg shadow-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 transition text-left w-full cursor-pointer"
             >
               SPA Hosting Guidelines
             </button>

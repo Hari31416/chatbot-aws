@@ -110,7 +110,7 @@ export function InputBar({
       >
         {/* Attachment previews */}
         {imagePreviewUrls.length > 0 && (
-          <div className="flex flex-wrap gap-2 p-1.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-955 rounded-lg max-w-full overflow-x-auto">
+          <div className="flex flex-wrap gap-2 p-1.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 rounded-lg max-w-full overflow-x-auto">
             {imagePreviewUrls.map((url, i) => (
               <div
                 key={url}
@@ -138,7 +138,7 @@ export function InputBar({
           </div>
         )}
 
-        <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-955 sm:flex-row sm:items-center relative">
+        <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900 sm:flex-row sm:items-center relative">
           <label className="flex items-center gap-2 text-xs font-bold text-zinc-650 dark:text-zinc-300 select-none shrink-0">
             <input
               type="checkbox"
@@ -201,7 +201,7 @@ export function InputBar({
                         return (
                           <label
                             key={doc.document_id}
-                            className={`flex items-start gap-2.5 px-3 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-850/40 cursor-pointer select-none transition ${isSelected ? "bg-blue-50/10 dark:bg-blue-950/10" : ""
+                            className={`flex items-start gap-2.5 px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer select-none transition ${isSelected ? "bg-blue-50/10 dark:bg-blue-900/20" : ""
                               } ${isProcessing || isFailed ? "opacity-60 cursor-not-allowed" : ""}`}
                           >
                             <input
@@ -285,7 +285,7 @@ export function InputBar({
         )}
 
         {/* Input Row matching user image search style */}
-        <div className="relative flex items-center bg-zinc-50 dark:bg-zinc-955 border border-zinc-200 dark:border-zinc-800 rounded-full px-4 py-1.5 focus-within:ring-2 focus-within:ring-blue-500 transition shadow-xs">
+        <div className="relative flex items-center bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-full px-4 py-1.5 focus-within:ring-2 focus-within:ring-blue-500 transition shadow-xs">
           <input
             type="file"
             multiple

@@ -38,3 +38,97 @@ h6 {
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 163, 175, 0.45);
 }
+/* Clerk Dark Mode styling overrides */
+.dark .cl-card {
+  background-color: #09090b !important;
+  border: 1px solid #27272a !important;
+  box-shadow: none !important;
+}
+
+.dark .cl-headerTitle {
+  color: #f4f4f5 !important;
+}
+
+.dark .cl-headerSubtitle {
+  color: #a1a1aa !important;
+}
+
+.dark .cl-socialButtonsBlockButton {
+  background-color: #18181b !important;
+  border: 1px solid #27272a !important;
+  color: #f4f4f5 !important;
+}
+
+.dark .cl-socialButtonsBlockButton:hover {
+  background-color: #27272a !important;
+}
+
+.dark .cl-socialButtonsBlockButtonText {
+  color: #f4f4f5 !important;
+}
+
+.dark .cl-dividerLine {
+  background-color: #27272a !important;
+}
+
+.dark .cl-dividerText {
+  color: #a1a1aa !important;
+}
+
+.dark .cl-formFieldLabel {
+  color: #d4d4d8 !important;
+}
+
+.dark .cl-formFieldInput {
+  background-color: #18181b !important;
+  border: 1px solid #27272a !important;
+  color: #f4f4f5 !important;
+}
+
+.dark .cl-formFieldInput:focus {
+  border-color: #3b82f6 !important;
+}
+
+.dark .cl-footerActionText {
+  color: #a1a1aa !important;
+}
+
+.dark .cl-footerActionLink {
+  color: #3b82f6 !important;
+}
+
+.dark .cl-footerActionLink:hover {
+  color: #60a5fa !important;
+}
+
+.dark .cl-footer {
+  background: #09090b !important;
+  border-top: 1px solid #27272a !important;
+  color: #a1a1aa !important;
+}
+
+.dark .cl-identityPreviewText {
+  color: #d4d4d8 !important;
+}
+
+.dark .cl-identityPreviewEditButtonIcon {
+  color: #a1a1aa !important;
+}
+
+/* User Button Popover overrides */
+.dark .cl-userButtonPopoverCard {
+  background-color: #09090b !important;
+  border: 1px solid #27272a !important;
+}
+
+.dark .cl-userButtonPopoverText {
+  color: #f4f4f5 !important;
+}
+
+.dark .cl-userButtonPopoverActionButton {
+  color: #f4f4f5 !important;
+}
+
+.dark .cl-userButtonPopoverActionButton:hover {
+  background-color: #18181b !important;
+}

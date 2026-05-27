@@ -30,6 +30,18 @@ export function Sidebar({
   handleLogout,
   onOpenDocuments,
 }: SidebarProps) {
+  const [isEmailRevealed, setIsEmailRevealed] = React.useState(false);
+
+  const garbleEmail = (email: string): string => {
+    if (!email || email === "Guest") return email;
+    if (!email.includes("@")) return email;
+    const [local, domain] = email.split("@");
+    if (local.length <= 3) {
+      return `${local.charAt(0)}${"•".repeat(local.length - 1)}@${domain}`;
+    }
+    return `${local.slice(0, 2)}${"•".repeat(local.length - 4)}${local.slice(-2)}@${domain}`;
+  };
+
   return (
     <>
       {/* Mobile Sidebar Overlay Backdrop */}
@@ -134,13 +146,38 @@ export function Sidebar({
             <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-semibold select-none shadow-xs shrink-0">
               {userId.charAt(0).toUpperCase()}
             </div>
-            <div className="flex flex-col min-w-0">
-              <span
-                className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate"
-                title={userId}
-              >
-                {userId}
-              </span>
+            <div className="flex flex-col min-w-0 flex-1">
+              {userId === "Guest" ? (
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+                  Guest
+                </span>
+              ) : (
+                <div className="flex items-center justify-between gap-1 min-w-0">
+                  <span
+                      className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 select-none flex-1"
+                      onClick={() => setIsEmailRevealed(!isEmailRevealed)}
+                      title={isEmailRevealed ? "Click to hide email" : "Click to show email"}
+                    >
+                      {isEmailRevealed ? userId : garbleEmail(userId)}
+                    </span>
+                  <button
+                    onClick={() => setIsEmailRevealed(!isEmailRevealed)}
+                    className="text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-300 focus:outline-hidden p-0.5 shrink-0 cursor-pointer"
+                    title={isEmailRevealed ? "Hide email" : "Show email"}
+                  >
+                    {isEmailRevealed ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.824 7.824 3 3m-3-3-3.867-3.867m0 0a3 3 0 1 1-4.243-4.243m4.242 4.242L9.88 9.88" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2050/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              )}
               <span className="text-[10px] text-zinc-400 font-medium">
                 Active Session
               </span>

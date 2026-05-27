@@ -288,3 +288,31 @@ class ConversationRepository:
             ScanIndexForward=False,
         )
         return response.get("Items", [])
+
+    def delete_rag_document(self, user_id: str, document_id: str) -> dict | None:
+        logger.debug(
+            "delete_rag_document user_id=%s document_id=%s", user_id, document_id
+        )
+        response = self._table.query(
+            KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
+            & Key("sk").begins_with("RAGDOC#")
+        )
+        items = response.get("Items", [])
+        target_item = None
+        for item in items:
+            if item.get("document_id") == document_id:
+                target_item = item
+                break
+        
+        if not target_item:
+            logger.warning(
+                "RAG document not found for delete user_id=%s document_id=%s",
+                user_id,
+                document_id,
+            )
+            return None
+            
+        self._table.delete_item(
+            Key={"pk": target_item["pk"], "sk": target_item["sk"]}
+        )
+        return target_item

@@ -285,6 +285,33 @@ export async function fetchRagDocuments(
 }
 
 /**
+ * Deletes an ingested RAG document
+ */
+export async function deleteRagDocument(
+  documentId: string,
+  apiBaseUrl: string,
+): Promise<{ deleted: boolean; document_id: string }> {
+  const cleanUrl = apiBaseUrl.replace(/\/$/, '')
+  const token = await getCurrentSessionToken()
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${cleanUrl}/rag/documents/${documentId}`, {
+    method: 'DELETE',
+    headers,
+  })
+
+  return handleResponse<{ deleted: boolean; document_id: string }>(
+    response,
+    'Failed to delete RAG document',
+  )
+}
+
+/**
  * Ingests a new document for RAG
  */
 export async function ingestRagDocument(

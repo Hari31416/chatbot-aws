@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { RagDocument } from "../types";
-import { ingestRagDocument, ingestRagFile } from "../services/api";
+import { ingestRagDocument, ingestRagFile, deleteRagDocument } from "../services/api";
 import { useToast } from "./ui/Toast";
 import { Button } from "./ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   Database,
   Sparkles,
   Clock,
+  Trash2,
 } from "lucide-react";
 
 interface DocumentsModalProps {
@@ -47,6 +48,7 @@ export function DocumentsModal({
 
   // General status
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null)
 
   // Clean up state when closing/opening
   React.useEffect(() => {
@@ -56,6 +58,7 @@ export function DocumentsModal({
       setPasteContent("");
       setSearchQuery("");
       setActiveTab("catalog");
+      setDeletingId(null)
     }
   }, [isOpen]);
 
@@ -155,6 +158,32 @@ export function DocumentsModal({
       setIsSubmitting(false);
     }
   };
+
+  // Handle Document Deletion
+  const handleDelete = async (documentId: string, filename: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${filename}"?`)) {
+      return
+    }
+
+    setDeletingId(documentId)
+    try {
+      await deleteRagDocument(documentId, apiBaseUrl)
+      toast({
+        title: 'Document Deleted',
+        description: `"${filename}" has been successfully removed.`,
+        type: 'success',
+      })
+      refetchDocuments()
+    } catch (err: any) {
+      toast({
+        title: 'Delete Failed',
+        description: err.message || 'An error occurred during deletion.',
+        type: 'error',
+      })
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   // File Drop Handlers
   const handleDragOver = (e: React.DragEvent) => {
@@ -309,6 +338,7 @@ export function DocumentsModal({
                           <th className="px-6 py-3.5">Footprint</th>
                           <th className="px-6 py-3.5">Ingested Date</th>
                           <th className="px-6 py-3.5 text-right">Identifier</th>
+                            <th className="px-6 py-3.5 text-right w-16">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-150 dark:divide-zinc-800 text-xs">
@@ -351,6 +381,20 @@ export function DocumentsModal({
                             </td>
                             <td className="px-6 py-4 text-right font-mono text-[9px] text-zinc-400">
                               {doc.document_id.slice(0, 8)}...
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button
+                                onClick={() => handleDelete(doc.document_id, doc.source_doc || doc.filename)}
+                                disabled={deletingId === doc.document_id}
+                                className="p-1 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400 transition cursor-pointer disabled:opacity-50 inline-flex items-center justify-center"
+                                title="Delete document"
+                              >
+                                {deletingId === doc.document_id ? (
+                                  <Clock className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-4 h-4" />
+                                )}
+                              </button>
                             </td>
                           </tr>
                         ))}

@@ -177,6 +177,13 @@ class InMemoryConversationRepository:
     def list_rag_documents(self, user_id: str) -> list[dict]:
         return list(reversed(self._rag_documents.get(user_id, [])))
 
+    def delete_rag_document(self, user_id: str, document_id: str) -> dict | None:
+        docs = self._rag_documents.setdefault(user_id, [])
+        for idx, doc in enumerate(docs):
+            if doc["document_id"] == document_id:
+                return docs.pop(idx)
+        return None
+
 
 class InMemoryStorageService:
     def __init__(self) -> None:
@@ -201,6 +208,7 @@ class InMemoryStorageService:
 class FakeVectorStore:
     def __init__(self) -> None:
         self.search_calls: list[dict] = []
+        self.deleted_keys: list[str] = []
         self.results = [
             {
                 "key": "rules#chunk-0",
@@ -226,6 +234,9 @@ class FakeVectorStore:
             }
         )
         return self.results
+
+    async def delete_chunks(self, keys: list[str]) -> None:
+        self.deleted_keys = keys
 
 
 class FakeRagService:
@@ -286,5 +297,6 @@ def test_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     setattr(client, "fake_llm", llm)
     setattr(client, "fake_vector_store", vector_store)
     setattr(client, "fake_rag_service", rag_service)
+    setattr(client, "fake_repo", repo)
     yield client
     app.dependency_overrides.clear()

@@ -362,3 +362,33 @@ def test_worker_handler_failure_updates_status() -> None:
     # staging file should still be cleaned up in finally block
     mock_s3.delete_object.assert_called_with(Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt")
 
+
+def test_rag_delete_endpoint_success(test_client: TestClient) -> None:
+    fake_repo = getattr(test_client, "fake_repo")
+    fake_repo.put_rag_document(
+        user_id="admin",
+        document_id="doc-delete-123",
+        filename="delete-me.txt",
+        chunks_ingested=2,
+        created_at="2026-05-27T10:00:00Z",
+        status="ready"
+    )
+
+    response = test_client.delete("/rag/documents/doc-delete-123")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {"deleted": True, "document_id": "doc-delete-123"}
+
+    fake_vector_store = getattr(test_client, "fake_vector_store")
+    assert fake_vector_store.deleted_keys == ["doc-delete-123#chunk-0", "doc-delete-123#chunk-1"]
+
+    docs = fake_repo.list_rag_documents("admin")
+    assert not any(d["document_id"] == "doc-delete-123" for d in docs)
+
+
+def test_rag_delete_endpoint_not_found(test_client: TestClient) -> None:
+    response = test_client.delete("/rag/documents/non-existent-id")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+

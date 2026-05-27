@@ -133,6 +133,21 @@ class VectorStoreClient:
             )
         logger.info("Ingested %d chunks into S3 Vectors", len(vectors_payload))
 
+    async def delete_chunks(self, keys: Sequence[str]) -> None:
+        if not keys:
+            return
+        for offset in range(0, len(keys), 500):
+            batch = keys[offset : offset + 500]
+            await to_thread.run_sync(
+                partial(
+                    self.client.delete_vectors,
+                    vectorBucketName=self.vector_bucket,
+                    indexName=self.index_name,
+                    keys=batch,
+                )
+            )
+        logger.info("Deleted %d chunks from S3 Vectors", len(keys))
+
     async def similarity_search(
         self,
         query_text: str,

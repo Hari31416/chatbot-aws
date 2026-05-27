@@ -115,6 +115,7 @@ Resources:
                 - s3vectors:QueryVectors
                 - s3vectors:GetVectors
                 - s3vectors:ListIndexes
+                - s3vectors:DeleteVectors
               Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
             - Effect: Allow
               Action:
@@ -395,6 +396,7 @@ Resources:
                 - s3vectors:QueryVectors
                 - s3vectors:GetVectors
                 - s3vectors:ListIndexes
+                - s3vectors:DeleteVectors
               Resource: !Sub "arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/${S3VectorBucketName}/*"
             - Effect: Allow
               Action:

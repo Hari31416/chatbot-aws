@@ -657,6 +657,42 @@ async def list_rag_documents(
     ]
 
 
+@router.delete("/rag/documents/{document_id}")
+async def delete_rag_document(
+    document_id: str,
+    repo=Depends(get_repository),
+    vector_store=Depends(get_vector_store),
+    user_id: str = Depends(get_current_user_id),
+) -> dict:
+    logger.info(
+        "RAG document delete request document_id=%s user_id=%s",
+        document_id,
+        user_id,
+    )
+    deleted_item = await to_thread.run_sync(
+        repo.delete_rag_document, user_id, document_id
+    )
+    if not deleted_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    chunks_ingested = deleted_item.get("chunks_ingested", 0)
+    if chunks_ingested > 0:
+        keys = [f"{document_id}#chunk-{idx}" for idx in range(chunks_ingested)]
+        try:
+            await vector_store.delete_chunks(keys)
+        except Exception as e:
+            logger.exception(
+                "Failed to delete vectors for document_id=%s: %s",
+                document_id,
+                e,
+            )
+
+    return {"deleted": True, "document_id": document_id}
+
+
 @router.post("/rag/search", response_model=RagSearchResponse)
 async def search_rag_context(
     payload: RagSearchRequest,

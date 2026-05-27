@@ -55,3 +55,15 @@ export interface RagDocument {
   status?: string;
   tags?: string[] | null;
 }
+
+export interface ActiveCitationInfo {
+  messageId: string;
+  index: number;
+  citation: {
+    text: string;
+    source: string;
+    page?: number;
+    score?: number;
+    [key: string]: any;
+  };
+}

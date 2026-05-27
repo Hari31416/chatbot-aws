@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { Message, Conversation } from "./types";
+import type { Message, Conversation, ActiveCitationInfo } from "./types";
 import {
   sendTextMessage,
   sendImageMessage,
@@ -22,6 +22,7 @@ import { ChatFeed } from "./components/ChatFeed";
 import { InputBar } from "./components/InputBar";
 import { SettingsModal } from "./components/SettingsModal";
 import { DocumentsModal } from "./components/DocumentsModal";
+import { CitationModal } from "./components/CitationModal";
 
 export function App() {
   const { toast } = useToast();
@@ -65,6 +66,7 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isDocumentsOpen, setIsDocumentsOpen] = React.useState(false);
   const [lightboxImage, setLightboxImage] = React.useState<string | null>(null);
+  const [activeCitation, setActiveCitation] = React.useState<ActiveCitationInfo | null>(null);
 
   // --- Chat & Conversation State ---
   const [conversations, setConversations] = React.useState<Conversation[]>(
@@ -132,6 +134,10 @@ export function App() {
     } else {
       localStorage.removeItem("active_conversation_id");
     }
+  }, [activeConversationId]);
+
+  React.useEffect(() => {
+    setActiveCitation(null);
   }, [activeConversationId]);
 
   React.useEffect(() => {
@@ -709,6 +715,8 @@ export function App() {
           messagesEndRef={messagesEndRef}
           isStreaming={isStreaming}
           activeConversationId={activeConversationId}
+          activeCitation={activeCitation}
+          setActiveCitation={setActiveCitation}
         />
 
         {/* Input Bar */}
@@ -766,6 +774,16 @@ export function App() {
         documents={ragDocuments}
         refetchDocuments={refetchRagDocuments}
       />
+
+      {/* --- CITATION MODAL --- */}
+      {activeCitation && (
+        <CitationModal
+          isOpen={activeCitation !== null}
+          onClose={() => setActiveCitation(null)}
+          index={activeCitation.index}
+          citation={activeCitation.citation}
+        />
+      )}
     </div>
   );
 }

@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
+from typing import Any
 
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
+
+
+def _float_to_decimal(obj: Any) -> Any:
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, dict):
+        return {k: _float_to_decimal(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_float_to_decimal(v) for v in obj]
+    return obj
+
+
+def _decimal_to_float(obj: Any) -> Any:
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _decimal_to_float(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_decimal_to_float(v) for v in obj]
+    return obj
 
 
 def pk_for_conversation(conversation_id: str) -> str:
@@ -53,7 +75,7 @@ class ConversationRepository:
             item["user_id"] = user_id
         try:
             self._table.put_item(
-                Item=item,
+                Item=_float_to_decimal(item),
                 ConditionExpression="attribute_not_exists(pk)",
             )
             logger.debug("Conversation created conversation_id=%s", conversation_id)
@@ -103,7 +125,7 @@ class ConversationRepository:
             item["user_id"] = user_id
         if citations:
             item["citations"] = citations
-        self._table.put_item(Item=item)
+        self._table.put_item(Item=_float_to_decimal(item))
 
     def get_recent_messages(self, conversation_id: str, limit: int) -> list[dict]:
         logger.debug(
@@ -122,7 +144,7 @@ class ConversationRepository:
             len(items),
             conversation_id,
         )
-        return items
+        return _decimal_to_float(items)
 
     def get_context(self, conversation_id: str) -> dict | None:
         logger.debug("get_context conversation_id=%s", conversation_id)
@@ -133,7 +155,7 @@ class ConversationRepository:
         logger.debug(
             "get_context conversation_id=%s found=%s", conversation_id, item is not None
         )
-        return item
+        return _decimal_to_float(item)
 
     def set_context(
         self,
@@ -149,13 +171,13 @@ class ConversationRepository:
             ttl_epoch,
         )
         self._table.put_item(
-            Item={
+            Item=_float_to_decimal({
                 "pk": pk_for_conversation(conversation_id),
                 "sk": "CTX",
                 "messages": messages,
                 "ttl": ttl_epoch,
                 "updated_at": updated_at,
-            }
+            })
         )
 
     def get_user_conversations(self, user_id: str) -> list[dict]:
@@ -168,14 +190,14 @@ class ConversationRepository:
         items.sort(
             key=lambda x: x.get("updated_at", x.get("created_at", "")), reverse=True
         )
-        return items
+        return _decimal_to_float(items)
 
     def get_conversation_meta(self, conversation_id: str) -> dict | None:
         logger.debug("get_conversation_meta conversation_id=%s", conversation_id)
         response = self._table.get_item(
             Key={"pk": pk_for_conversation(conversation_id), "sk": "META"}
         )
-        return response.get("Item")
+        return _decimal_to_float(response.get("Item"))
 
     def update_conversation(
         self, conversation_id: str, name: str, updated_at: str
@@ -197,7 +219,7 @@ class ConversationRepository:
             & Key("sk").begins_with("MSG#"),
             ScanIndexForward=True,
         )
-        return response.get("Items", [])
+        return _decimal_to_float(response.get("Items", []))
 
     def delete_conversation(self, conversation_id: str) -> None:
         logger.debug("delete_conversation conversation_id=%s", conversation_id)
@@ -227,7 +249,7 @@ class ConversationRepository:
             status,
         )
         self._table.put_item(
-            Item={
+            Item=_float_to_decimal({
                 "pk": pk_for_user(user_id),
                 "sk": rag_document_sk(created_at, document_id),
                 "user_id": user_id,
@@ -238,7 +260,7 @@ class ConversationRepository:
                 "status": status,
                 "created_at": created_at,
                 "updated_at": created_at,
-            }
+            })
         )
 
     def update_rag_document_status(
@@ -290,7 +312,7 @@ class ConversationRepository:
             & Key("sk").begins_with("RAGDOC#"),
             ScanIndexForward=False,
         )
-        return response.get("Items", [])
+        return _decimal_to_float(response.get("Items", []))
 
     def delete_rag_document(self, user_id: str, document_id: str) -> dict | None:
         logger.debug(
@@ -318,4 +340,4 @@ class ConversationRepository:
         self._table.delete_item(
             Key={"pk": target_item["pk"], "sk": target_item["sk"]}
         )
-        return target_item
+        return _decimal_to_float(target_item)

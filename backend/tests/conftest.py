@@ -271,6 +271,7 @@ def test_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
 
     monkeypatch.delenv("CLERK_ISSUER", raising=False)
     monkeypatch.delenv("CLERK_AUTHORIZED_PARTIES", raising=False)
+    monkeypatch.delenv("RAG_TOP_K", raising=False)
     get_settings.cache_clear()
 
     repo = InMemoryConversationRepository()
@@ -285,6 +286,7 @@ def test_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
         allowed_image_mime_types=["image/png", "image/jpeg", "image/webp"],
         clerk_issuer=None,
         clerk_authorized_parties=[],
+        rag_top_k=3,
     )
 
     app.dependency_overrides[get_repository] = lambda: repo

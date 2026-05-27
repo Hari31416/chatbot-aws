@@ -52,6 +52,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Clerk Authorized Parties (optional, comma-separated allowed origins)
+  RagTopK:
+    Type: Number
+    Default: 3
+    Description: Number of retrieved chunks for RAG context
 
 Globals:
   Function:
@@ -74,7 +78,7 @@ Globals:
         S3_VECTOR_BUCKET_NAME: !Ref S3VectorBucketName
         S3_VECTOR_INDEX_NAME: !Ref S3VectorIndexName
         EMBEDDING_DIMENSION: 768
-        RAG_TOP_K: 3
+        RAG_TOP_K: !Ref RagTopK
         RAG_CHUNK_SIZE: 800
         RAG_CHUNK_OVERLAP: 80
         CONTEXT_TTL_SECONDS: !Ref ContextTtlSeconds

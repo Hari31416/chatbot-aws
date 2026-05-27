@@ -1,0 +1,16 @@
+Given a conversation history and a follow-up query, rephrase the follow-up query to be a standalone, self-contained search query.
+This standalone query will be used for document retrieval (semantic search).
+
+Instructions:
+1. The standalone query must not have any dependencies on past turns, vagueness, or reference keywords (like "this", "that", "previous", "it", "they", "he", "she", etc.).
+2. Resolve any references or pronouns using the context of the conversation.
+3. Perform spelling correction and optimize keywords for better search retrieval.
+4. If there is no conversation history, simply correct any spelling errors and optimize the keywords of the query.
+5. Do NOT add any preamble, explanation, extra commentary, or quotes. Output ONLY the rephrased standalone query.
+
+Conversation History:
+{history_text}
+
+Follow-up Query: {user_message}
+
+Standalone Query:

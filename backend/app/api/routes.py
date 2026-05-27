@@ -35,8 +35,16 @@ from ..models.schemas import (
     RagSearchResponse,
     UpdateConversationRequest,
 )
-from ..services.prompt import build_history_messages, build_user_content
+from ..services.prompt import (
+    build_general_chat_messages,
+    build_history_messages,
+    build_image_chat_messages,
+    build_rag_chat_messages,
+    build_reformulate_prompt,
+    build_user_content,
+)
 from ..services.storage import build_image_key, extension_for_mime
+
 from ..utils.time import to_epoch_seconds, utcnow, utcnow_iso
 
 logger = logging.getLogger(__name__)
@@ -75,87 +83,6 @@ async def _update_context(
     await to_thread.run_sync(
         repo.set_context, conversation_id, trimmed, ttl_epoch, utcnow_iso()
     )
-
-
-async def _build_chat_messages(
-    payload: ChatRequest,
-    history: list[dict],
-    vector_store,
-    top_k: int,
-    user_id: str,
-    llm,
-) -> tuple[list[dict], list[dict]]:
-    messages = build_history_messages(history)
-    if not payload.use_rag:
-        messages.append({"role": "user", "content": payload.message})
-        return messages, []
-
-    # Format conversation history for reformulation prompt
-    history_lines = []
-    for msg in messages:
-        role = msg.get("role", "").capitalize()
-        content = msg.get("content", "")
-        history_lines.append(f"{role}: {content}")
-    history_text = "\n".join(history_lines) if history_lines else "None"
-
-    reformulate_prompt = (
-        "Given a conversation history and a follow-up query, rephrase the follow-up query to be a standalone, self-contained search query.\n"
-        "This standalone query will be used for document retrieval (semantic search).\n\n"
-        "Instructions:\n"
-        "1. The standalone query must not have any dependencies on past turns, vagueness, or reference keywords (like \"this\", \"that\", \"previous\", \"it\", \"they\", \"he\", \"she\", etc.).\n"
-        "2. Resolve any references or pronouns using the context of the conversation.\n"
-        "3. Perform spelling correction and optimize keywords for better search retrieval.\n"
-        "4. If there is no conversation history, simply correct any spelling errors and optimize the keywords of the query.\n"
-        "5. Do NOT add any preamble, explanation, extra commentary, or quotes. Output ONLY the rephrased standalone query.\n\n"
-        f"Conversation History:\n{history_text}\n\n"
-        f"Follow-up Query: {payload.message}\n\n"
-        "Standalone Query:"
-    )
-
-    try:
-        standalone_query = await llm.generate([{"role": "user", "content": reformulate_prompt}])
-        standalone_query = standalone_query.strip().strip('"').strip("'")
-        logger.info("Generated standalone query: '%s' from original: '%s'", standalone_query, payload.message)
-    except Exception as e:
-        logger.warning("Failed to generate standalone query: %s. Falling back to original query.", e)
-        standalone_query = payload.message
-
-    context_results = await vector_store.similarity_search(
-        standalone_query,
-        user_id=user_id,
-        top_k=top_k,
-        documents=payload.rag_documents,
-    )
-    if not context_results:
-        logger.info("RAG requested but no context was retrieved")
-        messages.append({"role": "user", "content": payload.message})
-        return messages, []
-
-    # Format the context
-    context = ""
-    for idx, item in enumerate(context_results, start=1):
-        context += f"[SOURCE {idx} STARTS]\n"
-        context += f"File: {item['source']}\n"
-        if item.get("page"):
-            context += f"Page: {item['page']}\n"
-        context += f"Content: {item['text']}\n"
-        context += f"[/SOURCE {idx} ENDS]\n\n"
-
-    system_prompt = (
-        "You are an assistant that answers questions using ONLY the information provided in the context.\n"
-        "Cite each factual sentence with source markers. Source markers should be in the format [n], where n corresponds "
-        "to the number of the source document in the provided list of sources (e.g. [SOURCE 1] corresponds to citation [1]). "
-        "If multiple sentences are supported by the same source, cite them with the same source marker. "
-        "If one sentence is supported by multiple sources, cite all relevant source markers together, like [1][3].\n"
-        "Do not use special brackets such as 【 or 】 for citations. Use only standard square brackets [].\n"
-        "If the answer cannot be found in the context, respond with 'I can not answer the question based on the provided information.'\n\n"
-        f"### Retrieved Context\n{context}"
-    )
-    return [
-        {"role": "system", "content": system_prompt},
-        *messages,
-        {"role": "user", "content": payload.message},
-    ], context_results
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -201,14 +128,59 @@ async def chat(
         history = await _load_history(
             repo, conversation_id, settings.max_history_messages
         )
-        messages, context_results = await _build_chat_messages(
-            payload=payload,
-            history=history,
-            vector_store=vector_store,
-            top_k=settings.rag_top_k,
-            user_id=user_id,
-            llm=llm,
-        )
+        if payload.use_rag:
+            # RAG Pathway
+            history_lines = []
+            for msg in history:
+                role = msg.get("role", "").capitalize()
+                content = msg.get("content", "")
+                history_lines.append(f"{role}: {content}")
+            history_text = "\n".join(history_lines) if history_lines else "None"
+
+            reformulate_prompt = build_reformulate_prompt(history_text, payload.message)
+            try:
+                standalone_query = await llm.generate(
+                    [{"role": "user", "content": reformulate_prompt}]
+                )
+                standalone_query = standalone_query.strip().strip('"').strip("'")
+                logger.info(
+                    "Generated standalone query: '%s' from original: '%s'",
+                    standalone_query,
+                    payload.message,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to generate standalone query: %s. Falling back to original query.",
+                    e,
+                )
+                standalone_query = payload.message
+
+            context_results = await vector_store.similarity_search(
+                standalone_query,
+                user_id=user_id,
+                top_k=settings.rag_top_k,
+                documents=payload.rag_documents,
+            )
+
+            # Format the context
+            context = ""
+            if context_results:
+                for idx, item in enumerate(context_results, start=1):
+                    context += f"[SOURCE {idx} STARTS]\n"
+                    context += f"File: {item['source']}\n"
+                    if item.get("page"):
+                        context += f"Page: {item['page']}\n"
+                    context += f"Content: {item['text']}\n"
+                    context += f"[/SOURCE {idx} ENDS]\n\n"
+            else:
+                logger.info("RAG requested but no context was retrieved")
+                context = "No relevant context found."
+
+            messages = build_rag_chat_messages(payload.message, history, context)
+        else:
+            # General Chat Pathway
+            context_results = []
+            messages = build_general_chat_messages(payload.message, history)
 
         assistant_text = await llm.generate(messages)
         if not assistant_text:
@@ -219,8 +191,11 @@ async def chat(
 
         # Process citations
         from ..services.citation import process_citations
+
         if payload.use_rag and context_results:
-            processed_text, cited_sources = process_citations(assistant_text, context_results)
+            processed_text, cited_sources = process_citations(
+                assistant_text, context_results
+            )
         else:
             processed_text = assistant_text
             cited_sources = []
@@ -330,14 +305,59 @@ async def chat_stream(
         history = await _load_history(
             repo, conversation_id, settings.max_history_messages
         )
-        messages, context_results = await _build_chat_messages(
-            payload=payload,
-            history=history,
-            vector_store=vector_store,
-            top_k=settings.rag_top_k,
-            user_id=user_id,
-            llm=llm,
-        )
+        if payload.use_rag:
+            # RAG Pathway
+            history_lines = []
+            for msg in history:
+                role = msg.get("role", "").capitalize()
+                content = msg.get("content", "")
+                history_lines.append(f"{role}: {content}")
+            history_text = "\n".join(history_lines) if history_lines else "None"
+
+            reformulate_prompt = build_reformulate_prompt(history_text, payload.message)
+            try:
+                standalone_query = await llm.generate(
+                    [{"role": "user", "content": reformulate_prompt}]
+                )
+                standalone_query = standalone_query.strip().strip('"').strip("'")
+                logger.info(
+                    "Generated standalone query: '%s' from original: '%s'",
+                    standalone_query,
+                    payload.message,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to generate standalone query: %s. Falling back to original query.",
+                    e,
+                )
+                standalone_query = payload.message
+
+            context_results = await vector_store.similarity_search(
+                standalone_query,
+                user_id=user_id,
+                top_k=settings.rag_top_k,
+                documents=payload.rag_documents,
+            )
+
+            # Format the context
+            context = ""
+            if context_results:
+                for idx, item in enumerate(context_results, start=1):
+                    context += f"[SOURCE {idx} STARTS]\n"
+                    context += f"File: {item['source']}\n"
+                    if item.get("page"):
+                        context += f"Page: {item['page']}\n"
+                    context += f"Content: {item['text']}\n"
+                    context += f"[/SOURCE {idx} ENDS]\n\n"
+            else:
+                logger.info("RAG requested but no context was retrieved")
+                context = "No relevant context found."
+
+            messages = build_rag_chat_messages(payload.message, history, context)
+        else:
+            # General Chat Pathway
+            context_results = []
+            messages = build_general_chat_messages(payload.message, history)
 
         async def token_generator():
             accumulated_text = ""
@@ -353,8 +373,11 @@ async def chat_stream(
 
                 # Stream succeeded, now process citations
                 from ..services.citation import process_citations
+
                 if payload.use_rag and context_results:
-                    processed_text, cited_sources = process_citations(accumulated_text, context_results)
+                    processed_text, cited_sources = process_citations(
+                        accumulated_text, context_results
+                    )
                 else:
                     processed_text = accumulated_text
                     cited_sources = []
@@ -474,7 +497,9 @@ async def chat_image(
 
             extension = extension_for_mime(upload_file.content_type)
             suffix = f"_{idx}" if len(all_files) > 1 else ""
-            s3_key = build_image_key(resolved_conversation_id, f"{user_message_id}{suffix}", extension)
+            s3_key = build_image_key(
+                resolved_conversation_id, f"{user_message_id}{suffix}", extension
+            )
             upload_result = await to_thread.run_sync(
                 storage.upload_image,
                 s3_key,
@@ -488,9 +513,7 @@ async def chat_image(
 
             attachments.append(Attachment(**attachment_dict))
 
-            data_url = (
-                f"data:{upload_file.content_type};base64,{base64.b64encode(data).decode('ascii')}"
-            )
+            data_url = f"data:{upload_file.content_type};base64,{base64.b64encode(data).decode('ascii')}"
             image_data_urls.append(data_url)
 
         logger.info(
@@ -531,9 +554,11 @@ async def chat_image(
         history = await _load_history(
             repo, resolved_conversation_id, settings.max_history_messages
         )
-        messages = build_history_messages(history)
-        user_content = build_user_content(message, image_data_urls=image_data_urls)
-        messages.append({"role": "user", "content": user_content})
+        messages = build_image_chat_messages(
+            message=message,
+            image_data_urls=image_data_urls,
+            history=history,
+        )
 
         assistant_text = await llm.generate(messages)
         if not assistant_text:
@@ -629,10 +654,7 @@ async def ingest_rag_text(
 
     s3_key = f"staging/{user_id}/{document_id}/{payload.filename}"
     await to_thread.run_sync(
-        storage.upload_bytes,
-        s3_key,
-        payload.content.encode("utf-8"),
-        "text/plain"
+        storage.upload_bytes, s3_key, payload.content.encode("utf-8"), "text/plain"
     )
 
     return RagIngestResponse(
@@ -692,7 +714,7 @@ async def ingest_rag_file(
         storage.upload_bytes,
         s3_key,
         data,
-        file.content_type or "application/octet-stream"
+        file.content_type or "application/octet-stream",
     )
 
     return RagIngestResponse(

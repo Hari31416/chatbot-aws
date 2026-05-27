@@ -7,8 +7,14 @@ echo "========================================="
 STACK_NAME="${1:-${STACK_NAME:-chat}}" # Default to "chat", or pass stack name as the first argument
 AWS_REGION="${AWS_REGION:-ap-south-1}"
 
-# Retrieve FunctionUrl, FrontendBucket and FrontendUrl
+# Retrieve ApiUrl, FunctionUrl, FrontendBucket and FrontendUrl
 API_URL=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --region "$AWS_REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+  --output text)
+
+FUNCTION_URL=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
   --region "$AWS_REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" \
@@ -37,6 +43,7 @@ if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" == "None" ]; then
 fi
 
 echo "📌 Active Backend API URL: $API_URL"
+echo "📌 Streaming Function URL: $FUNCTION_URL"
 echo "📌 Target S3 Bucket: $FRONTEND_BUCKET"
 echo "📌 Website URL: $FRONTEND_URL"
 echo "📌 AWS Region: $AWS_REGION"
@@ -46,9 +53,9 @@ echo "⚛️ 2. Building React frontend..."
 echo "========================================="
 cd frontend
 if [ -n "${VITE_CLERK_PUBLISHABLE_KEY:-}" ]; then
-  VITE_API_BASE_URL="$API_URL" VITE_CLERK_PUBLISHABLE_KEY="$VITE_CLERK_PUBLISHABLE_KEY" pnpm build
+  VITE_API_BASE_URL="$API_URL" VITE_FUNCTION_URL="$FUNCTION_URL" VITE_CLERK_PUBLISHABLE_KEY="$VITE_CLERK_PUBLISHABLE_KEY" pnpm build
 else
-  VITE_API_BASE_URL="$API_URL" pnpm build
+  VITE_API_BASE_URL="$API_URL" VITE_FUNCTION_URL="$FUNCTION_URL" pnpm build
 fi
 cd ..
 

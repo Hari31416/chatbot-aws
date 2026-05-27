@@ -6,8 +6,13 @@ interface SettingsModalProps {
   isBackendOnline: boolean | undefined;
   recheckBackendHealth: () => void;
   isCheckingHealth: boolean;
+  isFunctionOnline: boolean | undefined;
+  recheckFunctionHealth: () => void;
+  isCheckingFunction: boolean;
   apiBaseUrl: string;
   setApiBaseUrl: (url: string) => void;
+  functionUrl: string;
+  setFunctionUrl: (url: string) => void;
   userId: string;
 }
 
@@ -17,8 +22,13 @@ export function SettingsModal({
   isBackendOnline,
   recheckBackendHealth,
   isCheckingHealth,
+  isFunctionOnline,
+  recheckFunctionHealth,
+  isCheckingFunction,
   apiBaseUrl,
   setApiBaseUrl,
+  functionUrl,
+  setFunctionUrl,
   userId,
 }: SettingsModalProps) {
   if (!isSettingsOpen) return null;
@@ -37,26 +47,57 @@ export function SettingsModal({
         </div>
 
         <div className="p-4 space-y-4">
-          {/* Health state */}
-          <div className="flex items-center justify-between p-2 rounded-lg border border-zinc-205 dark:border-zinc-800 text-xs">
-            <span>API Heartbeat:</span>
-            <span className="font-semibold flex items-center gap-1.5">
-              <span
-                className={`inline-flex rounded-full h-2 w-2 ${isBackendOnline ? "bg-emerald-500" : "bg-red-500"}`}
-              />
-              {isBackendOnline ? "Connected" : "Offline"}
-            </span>
-            <button
-              type="button"
-              onClick={recheckBackendHealth}
-              disabled={isCheckingHealth}
-              className="text-blue-500 hover:text-blue-600 disabled:opacity-50 text-[10px] cursor-pointer"
-            >
-              Recheck
-            </button>
+          {/* Health status checks */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
+              Service Status Checks
+            </label>
+            <div className="space-y-2 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 bg-zinc-50/50 dark:bg-zinc-950/20 text-xs">
+              {/* Backend API status */}
+              <div className="flex items-center justify-between">
+                <span>Backend API:</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <span
+                      className={`inline-flex rounded-full h-2 w-2 ${isBackendOnline ? "bg-emerald-500" : "bg-red-500"}`}
+                    />
+                    {isBackendOnline ? "Connected" : "Offline"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={recheckBackendHealth}
+                    disabled={isCheckingHealth}
+                    className="text-blue-500 hover:text-blue-600 disabled:opacity-50 text-[10px] cursor-pointer font-medium"
+                  >
+                    {isCheckingHealth ? "..." : "Recheck"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Function App status */}
+              <div className="flex items-center justify-between border-t border-zinc-200/50 dark:border-zinc-800/50 pt-2 mt-2">
+                <span>Function App:</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <span
+                      className={`inline-flex rounded-full h-2 w-2 ${isFunctionOnline ? "bg-emerald-500" : "bg-red-500"}`}
+                    />
+                    {isFunctionOnline ? "Connected" : "Offline"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={recheckFunctionHealth}
+                    disabled={isCheckingFunction}
+                    className="text-blue-500 hover:text-blue-600 disabled:opacity-50 text-[10px] cursor-pointer font-medium"
+                  >
+                    {isCheckingFunction ? "..." : "Recheck"}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Endpoint configuration */}
+          {/* API Gateway Endpoint configuration */}
           <div className="space-y-1">
             <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
               API Endpoint Base URL
@@ -65,6 +106,20 @@ export function SettingsModal({
               type="text"
               value={apiBaseUrl}
               onChange={(e) => setApiBaseUrl(e.target.value)}
+              placeholder="http://localhost:8080"
+              className="w-full px-2.5 py-1.5 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-mono focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100"
+            />
+          </div>
+
+          {/* Function App Endpoint configuration */}
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
+              Streaming Function App URL
+            </label>
+            <input
+              type="text"
+              value={functionUrl}
+              onChange={(e) => setFunctionUrl(e.target.value)}
               placeholder="http://localhost:8080"
               className="w-full px-2.5 py-1.5 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-mono focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100"
             />

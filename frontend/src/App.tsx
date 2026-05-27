@@ -23,6 +23,7 @@ import { InputBar } from "./components/InputBar";
 import { SettingsModal } from "./components/SettingsModal";
 import { DocumentsModal } from "./components/DocumentsModal";
 import { CitationModal } from "./components/CitationModal";
+import { ConnectionScreen } from "./components/ConnectionScreen";
 
 export function App() {
   const { toast } = useToast();
@@ -53,6 +54,22 @@ export function App() {
       return import.meta.env.VITE_API_BASE_URL;
     }
     return (
+      localStorage.getItem("api_base_url") ||
+      import.meta.env.VITE_API_BASE_URL ||
+      "http://localhost:8080"
+    );
+  });
+
+  const [functionUrl, setFunctionUrl] = React.useState<string>(() => {
+    const isLocalhost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (!isLocalhost && import.meta.env.VITE_FUNCTION_URL) {
+      return import.meta.env.VITE_FUNCTION_URL;
+    }
+    return (
+      localStorage.getItem("function_url") ||
+      import.meta.env.VITE_FUNCTION_URL ||
       localStorage.getItem("api_base_url") ||
       import.meta.env.VITE_API_BASE_URL ||
       "http://localhost:8080"
@@ -102,16 +119,28 @@ export function App() {
     data: isBackendOnline,
     refetch: recheckBackendHealth,
     isFetching: isCheckingHealth,
+    status: backendHealthStatus,
   } = useQuery({
     queryKey: ["backendHealth", apiBaseUrl],
     queryFn: () => checkHealth(apiBaseUrl),
     refetchInterval: 30000,
   });
 
+  const {
+    data: isFunctionOnline,
+    refetch: recheckFunctionHealth,
+    isFetching: isCheckingFunction,
+    status: functionHealthStatus,
+  } = useQuery({
+    queryKey: ["functionHealth", functionUrl],
+    queryFn: () => checkHealth(functionUrl),
+    refetchInterval: 30000,
+  });
+
   const { data: ragDocuments = [], refetch: refetchRagDocuments } = useQuery({
     queryKey: ["ragDocuments", apiBaseUrl, isLoggedIn],
     queryFn: () => fetchRagDocuments(apiBaseUrl),
-    enabled: Boolean(apiBaseUrl && isLoggedIn),
+    enabled: Boolean(apiBaseUrl && isLoggedIn && isBackendOnline),
     refetchInterval: 30000,
   });
 
@@ -119,6 +148,10 @@ export function App() {
   React.useEffect(() => {
     localStorage.setItem("api_base_url", apiBaseUrl);
   }, [apiBaseUrl]);
+
+  React.useEffect(() => {
+    localStorage.setItem("function_url", functionUrl);
+  }, [functionUrl]);
 
   React.useEffect(() => {
     localStorage.setItem("user_id", userId);
@@ -511,7 +544,7 @@ export function App() {
       const token = await getCurrentSessionToken();
       sendChatMessageStream(
         inputText.trim(),
-        apiBaseUrl,
+        functionUrl || apiBaseUrl,
         token,
         currentConvId,
         (chunkText, citations, finalContent) => {
@@ -631,6 +664,29 @@ export function App() {
       <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950 text-sm text-zinc-500">
         Loading…
       </div>
+    );
+  }
+
+  const isHealthPending =
+    backendHealthStatus === "pending" || functionHealthStatus === "pending";
+  const isAnyOffline = isBackendOnline !== true || isFunctionOnline !== true;
+
+  if (isHealthPending || isAnyOffline) {
+    return (
+      <ConnectionScreen
+        apiBaseUrl={apiBaseUrl}
+        setApiBaseUrl={setApiBaseUrl}
+        functionUrl={functionUrl}
+        setFunctionUrl={setFunctionUrl}
+        isBackendOnline={isBackendOnline}
+        isFunctionOnline={isFunctionOnline}
+        isCheckingBackend={isCheckingHealth}
+        isCheckingFunction={isCheckingFunction}
+        onRetry={() => {
+          void recheckBackendHealth();
+          void recheckFunctionHealth();
+        }}
+      />
     );
   }
 
@@ -761,8 +817,13 @@ export function App() {
         isBackendOnline={isBackendOnline}
         recheckBackendHealth={recheckBackendHealth}
         isCheckingHealth={isCheckingHealth}
+        isFunctionOnline={isFunctionOnline}
+        recheckFunctionHealth={recheckFunctionHealth}
+        isCheckingFunction={isCheckingFunction}
         apiBaseUrl={apiBaseUrl}
         setApiBaseUrl={setApiBaseUrl}
+        functionUrl={functionUrl}
+        setFunctionUrl={setFunctionUrl}
         userId={userId}
       />
 

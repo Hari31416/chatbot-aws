@@ -446,6 +446,34 @@ def test_rag_delete_endpoint_success(test_client: TestClient) -> None:
     assert not any(d["document_id"] == "doc-delete-123" for d in docs)
 
 
+def test_rag_delete_endpoint_success_with_float_chunks(test_client: TestClient) -> None:
+    fake_repo = getattr(test_client, "fake_repo")
+    fake_repo.put_rag_document(
+        user_id="admin",
+        document_id="doc-delete-float-123",
+        filename="delete-me-float.txt",
+        chunks_ingested=3.0,  # Float value
+        created_at="2026-05-27T10:00:00Z",
+        status="ready"
+    )
+
+    response = test_client.delete("/rag/documents/doc-delete-float-123")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {"deleted": True, "document_id": "doc-delete-float-123"}
+
+    fake_vector_store = getattr(test_client, "fake_vector_store")
+    assert fake_vector_store.deleted_keys == [
+        "doc-delete-float-123#chunk-0",
+        "doc-delete-float-123#chunk-1",
+        "doc-delete-float-123#chunk-2"
+    ]
+
+    docs = fake_repo.list_rag_documents("admin")
+    assert not any(d["document_id"] == "doc-delete-float-123" for d in docs)
+
+
 def test_rag_delete_endpoint_not_found(test_client: TestClient) -> None:
     response = test_client.delete("/rag/documents/non-existent-id")
     assert response.status_code == 404

@@ -744,7 +744,7 @@ async def delete_rag_document(
             detail="Document not found",
         )
 
-    chunks_ingested = deleted_item.get("chunks_ingested", 0)
+    chunks_ingested = int(deleted_item.get("chunks_ingested", 0))
     if chunks_ingested > 0:
         keys = [f"{document_id}#chunk-{idx}" for idx in range(chunks_ingested)]
         try:

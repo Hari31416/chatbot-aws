@@ -22,6 +22,8 @@ def _float_to_decimal(obj: Any) -> Any:
 
 def _decimal_to_float(obj: Any) -> Any:
     if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
         return float(obj)
     if isinstance(obj, dict):
         return {k: _decimal_to_float(v) for k, v in obj.items()}

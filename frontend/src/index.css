@@ -5,6 +5,11 @@
 @theme {
   --font-sans: "Inter", sans-serif;
   --font-display: "Outfit", sans-serif;
+
+  --color-zinc-450: #898990;
+  --color-zinc-550: #616168;
+  --color-zinc-650: #48484e;
+  --color-zinc-850: #1f1f23;
 }
 
 body {

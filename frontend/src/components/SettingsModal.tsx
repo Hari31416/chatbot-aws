@@ -9,10 +9,6 @@ interface SettingsModalProps {
   isFunctionOnline: boolean | undefined;
   recheckFunctionHealth: () => void;
   isCheckingFunction: boolean;
-  apiBaseUrl: string;
-  setApiBaseUrl: (url: string) => void;
-  functionUrl: string;
-  setFunctionUrl: (url: string) => void;
   userId: string;
 }
 
@@ -25,10 +21,6 @@ export function SettingsModal({
   isFunctionOnline,
   recheckFunctionHealth,
   isCheckingFunction,
-  apiBaseUrl,
-  setApiBaseUrl,
-  functionUrl,
-  setFunctionUrl,
   userId,
 }: SettingsModalProps) {
   if (!isSettingsOpen) return null;
@@ -96,35 +88,6 @@ export function SettingsModal({
               </div>
             </div>
           </div>
-
-          {/* API Gateway Endpoint configuration */}
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
-              API Endpoint Base URL
-            </label>
-            <input
-              type="text"
-              value={apiBaseUrl}
-              onChange={(e) => setApiBaseUrl(e.target.value)}
-              placeholder="http://localhost:8080"
-              className="w-full px-2.5 py-1.5 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-mono focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100"
-            />
-          </div>
-
-          {/* Function App Endpoint configuration */}
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
-              Streaming Function App URL
-            </label>
-            <input
-              type="text"
-              value={functionUrl}
-              onChange={(e) => setFunctionUrl(e.target.value)}
-              placeholder="http://localhost:8080"
-              className="w-full px-2.5 py-1.5 text-xs rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-mono focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100"
-            />
-          </div>
-
           {/* User ID display only */}
           <div className="space-y-1">
             <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">

@@ -395,6 +395,8 @@ export interface StreamChunk {
   assistant_message_id?: string;
   user_message_id?: string;
   error?: string;
+  citations?: any[];
+  final_content?: string;
 }
 
 /**
@@ -405,11 +407,12 @@ export async function sendChatMessageStream(
   apiBaseUrl: string,
   token: string | null,
   conversationId?: string | null,
-  onChunk?: (text: string) => void,
+  onChunk?: (text: string, citations?: any[] | null, finalContent?: string | null) => void,
   onComplete?: (
     finalConversationId: string,
     assistantMsgId: string,
     userMsgId: string,
+    citations?: any[] | null,
   ) => void,
   onError?: (error: string) => void,
   ragOptions?: Pick<ChatRequest, "use_rag" | "rag_documents">,
@@ -457,6 +460,7 @@ export async function sendChatMessageStream(
     let activeConversationId = conversationId || "";
     let activeAssistantMsgId = "";
     let activeUserMsgId = "";
+    let activeCitations: any[] | null = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -480,8 +484,11 @@ export async function sendChatMessageStream(
             if (onError) onError(chunk.error);
             return;
           }
-          if (chunk.text && onChunk) {
-            onChunk(chunk.text);
+          if (chunk.citations) {
+            activeCitations = chunk.citations;
+          }
+          if (onChunk) {
+            onChunk(chunk.text || "", chunk.citations || null, chunk.final_content || null);
           }
           if (chunk.conversation_id) {
             activeConversationId = chunk.conversation_id;
@@ -499,7 +506,7 @@ export async function sendChatMessageStream(
     }
 
     if (onComplete && activeConversationId) {
-      onComplete(activeConversationId, activeAssistantMsgId, activeUserMsgId);
+      onComplete(activeConversationId, activeAssistantMsgId, activeUserMsgId, activeCitations);
     }
   } catch (error: any) {
     if (onError) {

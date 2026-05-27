@@ -44,6 +44,7 @@ class RagSearchResult(BaseModel):
     source: str
     score: float
     key: str | None = None
+    page: int | None = None
 
 
 class RagSearchResponse(BaseModel):
@@ -65,6 +66,7 @@ class ChatResponse(BaseModel):
     assistant_message: str | None = None
     created_at: str | None = None
     error: str | None = None
+    citations: list[dict] | None = None
 
 
 class ChatImageResponse(ChatResponse):
@@ -87,6 +89,7 @@ class MessageResponse(BaseModel):
     created_at: str
     attachment: Attachment | None = None
     attachments: list[Attachment] | None = None
+    citations: list[dict] | None = None
 
 
 class UpdateConversationRequest(BaseModel):

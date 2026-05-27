@@ -170,17 +170,30 @@ export function ChatFeed({
           {children}
         </em>
       ),
-      a: ({ children, href, ...props }: any) => (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-650 dark:text-blue-400 hover:underline font-medium"
-          {...props}
-        >
-          {children}
-        </a>
-      ),
+      a: ({ children, href, ...props }: any) => {
+        if (href && href.startsWith("#source-")) {
+          return (
+            <a
+              href={href}
+              className="inline-flex items-center justify-center font-mono text-[9px] font-bold bg-blue-100 hover:bg-blue-200 dark:bg-blue-950 dark:hover:bg-blue-900 text-blue-600 dark:text-blue-450 rounded-full w-4.5 h-4.5 mx-0.5 align-super transform -translate-y-0.5 transition-colors select-none cursor-pointer"
+              {...props}
+            >
+              {String(children).replace(/[\[\]]/g, "")}
+            </a>
+          );
+        }
+        return (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-650 dark:text-blue-400 hover:underline font-medium"
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      },
       blockquote: ({ children, ...props }: any) => (
         <blockquote
           className="border-l-4 border-zinc-300 dark:border-zinc-700 pl-4 py-1 italic my-3 text-zinc-600 dark:text-zinc-400"
@@ -400,9 +413,46 @@ export function ChatFeed({
                       {msg.content}
                     </p>
                   ) : (
-                    <div className="prose prose-zinc dark:prose-invert max-w-none">
-                      {renderMarkdown(msg.content)}
-                    </div>
+                      <>
+                        <div className="prose prose-zinc dark:prose-invert max-w-none">
+                          {renderMarkdown(msg.content)}
+                        </div>
+                        {msg.citations && msg.citations.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs">
+                            <span className="font-semibold text-zinc-500 dark:text-zinc-400 block mb-2 uppercase tracking-wider text-[9px]">
+                              Sources
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              {msg.citations.map((cite, idx) => (
+                                <div
+                                  key={idx}
+                                  id={`source-${idx + 1}`}
+                                  className="flex flex-col p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 max-w-[280px]"
+                                >
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <span className="font-semibold text-[10px] text-blue-600 dark:text-blue-400 font-mono bg-blue-50 dark:bg-blue-900/30 px-1 rounded">
+                                      [{idx + 1}]
+                                    </span>
+                                    <span className="font-medium text-[11px] text-zinc-700 dark:text-zinc-300 truncate max-w-[150px]" title={cite.source}>
+                                      {cite.source}
+                                    </span>
+                                    {cite.page && (
+                                      <span className="text-[9px] bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded text-zinc-500 shrink-0">
+                                        Page {cite.page}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {cite.text && (
+                                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-2 italic" title={cite.text}>
+                                      "{cite.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
                   )}
 
                   {/* Error feedback */}

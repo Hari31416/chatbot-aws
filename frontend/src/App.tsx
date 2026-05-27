@@ -266,6 +266,7 @@ export function App() {
         created_at: data.created_at || new Date().toISOString(),
         attachment: data.attachment,
         attachments: data.attachments,
+        citations: data.citations,
       };
 
       setMessages((prev) => {
@@ -506,20 +507,29 @@ export function App() {
         apiBaseUrl,
         token,
         currentConvId,
-        (chunkText) => {
+        (chunkText, citations, finalContent) => {
           setMessages((prev) => {
             const currentList = prev[currentConvId!] || [];
             return {
               ...prev,
-              [currentConvId!]: currentList.map((m) =>
-                m.id === tempAssistantMsgId
-                  ? { ...m, content: m.content + chunkText }
-                  : m,
-              ),
+              [currentConvId!]: currentList.map((m) => {
+                if (m.id === tempAssistantMsgId) {
+                  let content = m.content + chunkText;
+                  if (finalContent !== null && finalContent !== undefined) {
+                    content = finalContent;
+                  }
+                  return {
+                    ...m,
+                    content,
+                    citations: citations || m.citations,
+                  };
+                }
+                return m;
+              }),
             };
           });
         },
-        (finalConvId, assistantMsgId, userMsgId) => {
+        (finalConvId, assistantMsgId, userMsgId, citations) => {
           setMessages((prev) => {
             const currentList = prev[finalConvId] || [];
             return {
@@ -529,7 +539,11 @@ export function App() {
                   return { ...m, id: userMsgId || m.id };
                 }
                 if (m.id === tempAssistantMsgId) {
-                  return { ...m, id: assistantMsgId || m.id };
+                  return {
+                    ...m,
+                    id: assistantMsgId || m.id,
+                    citations: citations || m.citations,
+                  };
                 }
                 return m;
               }),

@@ -148,18 +148,25 @@ class RagService:
                 if not next_token:
                     break
 
-            # 5. Extract text lines
-            lines = []
+            # 5. Extract text lines grouped by page
+            from collections import defaultdict
+            lines_by_page = defaultdict(list)
+            total_lines = 0
+            total_chars = 0
             for block in blocks:
                 if block.get("BlockType") == "LINE":
                     text = block.get("Text")
+                    page = block.get("Page", 1)
                     if text:
-                        lines.append(text)
-            extracted_text = "\n".join(lines)
+                        lines_by_page[page].append(text)
+                        total_lines += 1
+                        total_chars += len(text)
+            
             logger.info(
-                "Extracted %d lines (%d chars) from document=%s",
-                len(lines),
-                len(extracted_text),
+                "Extracted %d lines (%d chars) from %d pages in document=%s",
+                total_lines,
+                total_chars,
+                len(lines_by_page),
                 filename,
             )
 
@@ -180,8 +187,16 @@ class RagService:
                     e,
                 )
 
-        # 7. Split text and upsert to vector store
-        chunks = self.split_text(extracted_text)
+        # 7. Split text page-by-page and upsert to vector store
+        chunks = []
+        page_numbers = []
+        for page in sorted(lines_by_page.keys()):
+            page_text = "\n".join(lines_by_page[page])
+            page_chunks = self.split_text(page_text)
+            for chunk in page_chunks:
+                chunks.append(chunk)
+                page_numbers.append(page)
+
         if not chunks:
             return RagIngestResult(document_id=document_id, chunks_ingested=0)
 
@@ -194,6 +209,7 @@ class RagService:
             source_doc=filename,
             document_id=document_id,
             user_id=user_id,
+            page_numbers=page_numbers,
         )
         return RagIngestResult(
             document_id=document_id,

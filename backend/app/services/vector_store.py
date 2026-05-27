@@ -101,23 +101,28 @@ class VectorStoreClient:
         source_doc: str,
         document_id: str,
         user_id: str,
+        page_numbers: Sequence[int | None] | None = None,
     ) -> None:
         if not (len(keys) == len(texts) == len(embeddings)):
             raise ValueError("keys, texts, and embeddings must have matching lengths")
 
         vectors_payload: list[dict[str, Any]] = []
         for idx, (key, text, vector) in enumerate(zip(keys, texts, embeddings)):
+            metadata = {
+                "text": text,
+                "source_doc": source_doc,
+                "document_id": document_id,
+                "user_id": user_id,
+                "chunk_idx": idx,
+            }
+            if page_numbers and idx < len(page_numbers) and page_numbers[idx] is not None:
+                metadata["page"] = page_numbers[idx]
+
             vectors_payload.append(
                 {
                     "key": key,
                     "data": {"float32": list(vector)},
-                    "metadata": {
-                        "text": text,
-                        "source_doc": source_doc,
-                        "document_id": document_id,
-                        "user_id": user_id,
-                        "chunk_idx": idx,
-                    },
+                    "metadata": metadata,
                 }
             )
 
@@ -189,6 +194,7 @@ class VectorStoreClient:
                     "text": metadata.get("text", ""),
                     "source": metadata.get("source_doc", "unknown"),
                     "score": round(score, 4),
+                    "page": metadata.get("page"),
                 }
             )
         return results

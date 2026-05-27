@@ -13,6 +13,7 @@ export interface Message {
   attachment?: Attachment | null;
   attachments?: Attachment[] | null;
   error?: string | null;
+  citations?: any[] | null;
 }
 
 export interface Conversation {
@@ -40,6 +41,7 @@ export interface ChatResponse {
   error?: string | null;
   attachment?: Attachment | null;
   attachments?: Attachment[] | null;
+  citations?: any[] | null;
 }
 
 export interface RagDocument {

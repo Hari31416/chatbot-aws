@@ -132,14 +132,15 @@ class MockVectorStore:
     async def get_embeddings(self, texts):
         return [[0.1] * 768 for _ in range(len(texts))]
 
-    async def upsert_chunks(self, keys, texts, embeddings, source_doc, document_id, user_id):
+    async def upsert_chunks(self, keys, texts, embeddings, source_doc, document_id, user_id, page_numbers=None):
         self.upserts.append({
             "keys": keys,
             "texts": texts,
             "embeddings": embeddings,
             "source_doc": source_doc,
             "document_id": document_id,
-            "user_id": user_id
+            "user_id": user_id,
+            "page_numbers": page_numbers
         })
 
 

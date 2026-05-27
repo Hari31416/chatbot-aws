@@ -79,6 +79,7 @@ class ConversationRepository:
         attachment: dict | None = None,
         user_id: str | None = None,
         attachments: list[dict] | None = None,
+        citations: list[dict] | None = None,
     ) -> None:
         logger.debug(
             "put_message conversation_id=%s message_id=%s role=%s",
@@ -100,6 +101,8 @@ class ConversationRepository:
             item["attachments"] = attachments
         if user_id:
             item["user_id"] = user_id
+        if citations:
+            item["citations"] = citations
         self._table.put_item(Item=item)
 
     def get_recent_messages(self, conversation_id: str, limit: int) -> list[dict]:

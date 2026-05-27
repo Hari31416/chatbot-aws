@@ -54,8 +54,8 @@ def test_chat_stream(test_client: TestClient) -> None:
     lines = list(response.iter_lines())
     non_empty_lines = [line for line in lines if line.strip()]
 
-    # We expect 4 data lines: "stubbed", " ", "response", and "[DONE]"
-    assert len(non_empty_lines) == 4
+    # We expect 5 data lines: "stubbed", " ", "response", citations/metadata, and "[DONE]"
+    assert len(non_empty_lines) == 5
 
     import json
 
@@ -67,8 +67,14 @@ def test_chat_stream(test_client: TestClient) -> None:
     assert chunk_1["assistant_message_id"]
     assert chunk_1["user_message_id"]
 
+    # Parse citations chunk
+    assert non_empty_lines[3].startswith("data: ")
+    chunk_metadata = json.loads(non_empty_lines[3].replace("data: ", ""))
+    assert "citations" in chunk_metadata
+    assert chunk_metadata["final_content"] == "stubbed response"
+
     # Parse last chunk
-    assert non_empty_lines[3] == "data: [DONE]"
+    assert non_empty_lines[4] == "data: [DONE]"
 
 
 def test_chat_multi_image_upload(test_client: TestClient) -> None:

@@ -83,11 +83,11 @@ async def _build_chat_messages(
     vector_store,
     top_k: int,
     user_id: str,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     messages = build_history_messages(history)
     if not payload.use_rag:
         messages.append({"role": "user", "content": payload.message})
-        return messages
+        return messages, []
 
     context_results = await vector_store.similarity_search(
         payload.message,
@@ -98,24 +98,33 @@ async def _build_chat_messages(
     if not context_results:
         logger.info("RAG requested but no context was retrieved")
         messages.append({"role": "user", "content": payload.message})
-        return messages
+        return messages, []
 
-    context = "\n\n".join(
-        f"[Source: {item['source']} | Score: {item['score']}]\n{item['text']}"
-        for item in context_results
-        if item.get("text")
-    )
+    # Format the context
+    context = ""
+    for idx, item in enumerate(context_results, start=1):
+        context += f"[SOURCE {idx} STARTS]\n"
+        context += f"File: {item['source']}\n"
+        if item.get("page"):
+            context += f"Page: {item['page']}\n"
+        context += f"Content: {item['text']}\n"
+        context += f"[/SOURCE {idx} ENDS]\n\n"
+
     system_prompt = (
-        "You are an expert AI assistant. Answer the user's question using only "
-        "the retrieved context below. If the answer is not contained in the "
-        "context, state that you do not know based on the available documents.\n\n"
+        "You are an assistant that answers questions using ONLY the information provided in the context.\n"
+        "Cite each factual sentence with source markers. Source markers should be in the format [n], where n corresponds "
+        "to the number of the source document in the provided list of sources (e.g. [SOURCE 1] corresponds to citation [1]). "
+        "If multiple sentences are supported by the same source, cite them with the same source marker. "
+        "If one sentence is supported by multiple sources, cite all relevant source markers together, like [1][3].\n"
+        "Do not use special brackets such as 【 or 】 for citations. Use only standard square brackets [].\n"
+        "If the answer cannot be found in the context, respond with 'I can not answer the question based on the provided information.'\n\n"
         f"### Retrieved Context\n{context}"
     )
     return [
         {"role": "system", "content": system_prompt},
         *messages,
         {"role": "user", "content": payload.message},
-    ]
+    ], context_results
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -161,7 +170,7 @@ async def chat(
         history = await _load_history(
             repo, conversation_id, settings.max_history_messages
         )
-        messages = await _build_chat_messages(
+        messages, context_results = await _build_chat_messages(
             payload=payload,
             history=history,
             vector_store=vector_store,
@@ -176,6 +185,14 @@ async def chat(
                 detail="LLM returned empty response",
             )
 
+        # Process citations
+        from ..services.citation import process_citations
+        if payload.use_rag and context_results:
+            processed_text, cited_sources = process_citations(assistant_text, context_results)
+        else:
+            processed_text = assistant_text
+            cited_sources = []
+
         assistant_message_id = str(uuid4())
         assistant_created_at = utcnow_iso()
         await to_thread.run_sync(
@@ -183,10 +200,12 @@ async def chat(
             conversation_id,
             assistant_message_id,
             "assistant",
-            assistant_text,
+            processed_text,
             assistant_created_at,
             None,
             None,
+            None,
+            cited_sources,
         )
 
         await _update_context(
@@ -196,7 +215,7 @@ async def chat(
             settings.context_ttl_seconds,
             history,
             payload.message,
-            assistant_text,
+            processed_text,
         )
 
         logger.info(
@@ -209,8 +228,9 @@ async def chat(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            assistant_message=assistant_text,
+            assistant_message=processed_text,
             created_at=assistant_created_at,
+            citations=cited_sources if cited_sources else None,
         )
     except Exception as e:
         error_msg = str(e)
@@ -278,7 +298,7 @@ async def chat_stream(
         history = await _load_history(
             repo, conversation_id, settings.max_history_messages
         )
-        messages = await _build_chat_messages(
+        messages, context_results = await _build_chat_messages(
             payload=payload,
             history=history,
             vector_store=vector_store,
@@ -298,17 +318,30 @@ async def chat_stream(
                         # Yield compliant SSE event chunk
                         yield f"data: {json.dumps({'text': token, 'conversation_id': conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': user_message_id})}\n\n"
 
-                # Stream succeeded, now save complete assistant response in DB
+                # Stream succeeded, now process citations
+                from ..services.citation import process_citations
+                if payload.use_rag and context_results:
+                    processed_text, cited_sources = process_citations(accumulated_text, context_results)
+                else:
+                    processed_text = accumulated_text
+                    cited_sources = []
+
+                # Yield remapped citations and final remapped content text
+                yield f"data: {json.dumps({'citations': cited_sources, 'text': '', 'conversation_id': conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': user_message_id, 'final_content': processed_text})}\n\n"
+
+                # Save complete assistant response in DB
                 assistant_created_at = utcnow_iso()
                 await to_thread.run_sync(
                     repo.put_message,
                     conversation_id,
                     assistant_message_id,
                     "assistant",
-                    accumulated_text,
+                    processed_text,
                     assistant_created_at,
                     None,
                     None,
+                    None,
+                    cited_sources,
                 )
 
                 # Update context cache
@@ -319,7 +352,7 @@ async def chat_stream(
                     settings.context_ttl_seconds,
                     history,
                     payload.message,
-                    accumulated_text,
+                    processed_text,
                 )
 
                 # Send close token
@@ -796,6 +829,7 @@ async def get_conversation_messages(
                 created_at=item.get("created_at"),
                 attachment=attachment,
                 attachments=attachments,
+                citations=item.get("citations"),
             )
         )
     return messages

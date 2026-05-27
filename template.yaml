@@ -40,6 +40,18 @@ Parameters:
     Default: INFO
     AllowedValues: [DEBUG, INFO, WARNING, ERROR]
     Description: Python logging level for the Lambda function
+  ClerkIssuer:
+    Type: String
+    Default: "https://accurate-moccasin-43.clerk.accounts.dev/"
+    Description: Clerk OIDC Issuer URL
+  ClerkJwksUrl:
+    Type: String
+    Default: ""
+    Description: Clerk JWKS URL (optional)
+  ClerkAuthorizedParties:
+    Type: String
+    Default: ""
+    Description: Clerk Authorized Parties (optional, comma-separated allowed origins)
 
 Globals:
   Function:
@@ -69,8 +81,9 @@ Globals:
         MAX_HISTORY_MESSAGES: 10
         LITELLM_API_KEY_PARAMETER: /chatbot/litellm_api_key
         LOG_LEVEL: !Ref LogLevel
-        COGNITO_USER_POOL_ID: !Ref ChatbotUserPool
-        COGNITO_CLIENT_ID: !Ref ChatbotUserPoolClient
+        CLERK_ISSUER: !Ref ClerkIssuer
+        CLERK_JWKS_URL: !Ref ClerkJwksUrl
+        CLERK_AUTHORIZED_PARTIES: !Ref ClerkAuthorizedParties
 
 Resources:
   # -------------------------------------------------------------
@@ -155,8 +168,7 @@ Resources:
             Path: /health
             Method: GET
             ApiId: !Ref ChatbotHttpApi
-            Auth:
-              Authorizer: NONE
+
 
   ChatbotBackendFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -182,15 +194,7 @@ Resources:
           - PUT
           - DELETE
           - OPTIONS
-      Auth:
-        DefaultAuthorizer: CognitoAuthorizer
-        Authorizers:
-          CognitoAuthorizer:
-            IdentitySource: "$request.header.Authorization"
-            JwtConfiguration:
-              Audience:
-                - !Ref ChatbotUserPoolClient
-              Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${ChatbotUserPool}"
+
 
 
 
@@ -298,44 +302,6 @@ Resources:
             Principal: "*"
             Action: s3:GetObject
             Resource: !Sub arn:aws:s3:::${ChatbotFrontendBucket}/*
-
-  # -------------------------------------------------------------
-  # AWS Cognito User Pool
-  # -------------------------------------------------------------
-  ChatbotUserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: !Sub chatbot-users-${Environment}
-      UsernameAttributes:
-        - email
-      AutoVerifiedAttributes:
-        - email
-      Policies:
-        PasswordPolicy:
-          MinimumLength: 8
-          RequireLowercase: false
-          RequireNumbers: false
-          RequireSymbols: false
-          RequireUppercase: false
-      Schema:
-        - Name: email
-          AttributeDataType: String
-          Required: true
-          Mutable: true
-
-  # -------------------------------------------------------------
-  # AWS Cognito User Pool Client
-  # -------------------------------------------------------------
-  ChatbotUserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: !Sub chatbot-client-${Environment}
-      UserPoolId: !Ref ChatbotUserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_PASSWORD_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_USER_SRP_AUTH
 
   # -------------------------------------------------------------
   # Amazon S3 Vectors Vector Bucket
@@ -466,10 +432,4 @@ Outputs:
   FrontendBucket:
     Description: "S3 Bucket Name for the Frontend Website"
     Value: !Ref ChatbotFrontendBucket
-  UserPoolId:
-    Description: "AWS Cognito User Pool ID"
-    Value: !Ref ChatbotUserPool
-  UserPoolClientId:
-    Description: "AWS Cognito User Pool Client ID"
-    Value: !Ref ChatbotUserPoolClient
 

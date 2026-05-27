@@ -73,7 +73,7 @@ export function SettingsModal({
           {/* User ID display only */}
           <div className="space-y-1">
             <label className="text-xs font-semibold text-zinc-550 dark:text-zinc-400">
-              Active Cognito Email
+              Active User Email
             </label>
             <input
               type="text"

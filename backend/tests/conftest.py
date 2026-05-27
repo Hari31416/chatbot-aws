@@ -253,8 +253,12 @@ class FakeRagService:
 
 
 @pytest.fixture()
-def test_client() -> Iterator[TestClient]:
+def test_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     from app.main import app
+
+    monkeypatch.delenv("CLERK_ISSUER", raising=False)
+    monkeypatch.delenv("CLERK_AUTHORIZED_PARTIES", raising=False)
+    get_settings.cache_clear()
 
     repo = InMemoryConversationRepository()
     storage = InMemoryStorageService()
@@ -266,6 +270,8 @@ def test_client() -> Iterator[TestClient]:
         s3_bucket_name="test-bucket",
         max_image_bytes=5 * 1024 * 1024,
         allowed_image_mime_types=["image/png", "image/jpeg", "image/webp"],
+        clerk_issuer=None,
+        clerk_authorized_parties=[],
     )
 
     app.dependency_overrides[get_repository] = lambda: repo

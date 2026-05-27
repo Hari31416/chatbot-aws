@@ -42,12 +42,30 @@ class Settings(BaseSettings):
         default=10, validation_alias="MAX_HISTORY_MESSAGES"
     )
 
-    cognito_user_pool_id: str | None = Field(
-        default=None, validation_alias="COGNITO_USER_POOL_ID"
+    # ── Clerk Auth ──
+    clerk_issuer: str | None = Field(default=None, validation_alias="CLERK_ISSUER")
+    clerk_jwks_url: str | None = Field(
+        default=None, validation_alias="CLERK_JWKS_URL"
     )
-    cognito_client_id: str | None = Field(
-        default=None, validation_alias="COGNITO_CLIENT_ID"
+    clerk_authorized_parties: list[str] | str = Field(
+        default_factory=list,
+        validation_alias="CLERK_AUTHORIZED_PARTIES",
     )
+    clerk_secret_key: str | None = Field(
+        default=None, validation_alias="CLERK_SECRET_KEY"
+    )
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.clerk_issuer)
+
+    @property
+    def clerk_jwks_uri(self) -> str | None:
+        if self.clerk_jwks_url:
+            return self.clerk_jwks_url
+        if self.clerk_issuer:
+            return f"{self.clerk_issuer.rstrip('/')}/.well-known/jwks.json"
+        return None
 
     litellm_model: str = Field(default="gpt-4o-mini", validation_alias="LITELLM_MODEL")
     litellm_api_key: str | None = Field(
@@ -93,6 +111,13 @@ class Settings(BaseSettings):
     @field_validator("allowed_image_mime_types", mode="before")
     @classmethod
     def _parse_mime_types(cls, value: object) -> list[str] | object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("clerk_authorized_parties", mode="before")
+    @classmethod
+    def _parse_authorized_parties(cls, value: object) -> list[str] | object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

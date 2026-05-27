@@ -13,16 +13,10 @@ import {
 } from "./services/api";
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/components/theme-provider";
-import {
-  signUpUser,
-  confirmSignUpUser,
-  signInUser,
-  signOutUser,
-  isUserLoggedIn,
-  getCurrentUserEmail,
-  getCurrentSessionToken,
-} from "./services/auth";
+import { useAuth } from "@clerk/react";
+import { getCurrentSessionToken } from "./services/auth";
 import { AuthGate } from "./components/AuthGate";
+import { ClerkAuthSync } from "./components/ClerkAuthSync";
 import { Sidebar } from "./components/Sidebar";
 import { ChatFeed } from "./components/ChatFeed";
 import { InputBar } from "./components/InputBar";
@@ -32,16 +26,22 @@ import { DocumentsModal } from "./components/DocumentsModal";
 export function App() {
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
+  const { isLoaded: isClerkLoaded, signOut } = useAuth();
 
   // --- Authentication State ---
-  const [isLoggedIn, setIsLoggedIn] = React.useState(isUserLoggedIn());
-  const [authMode, setAuthMode] = React.useState<"LOGIN" | "SIGNUP" | "VERIFY">(
-    "LOGIN",
+  const [isLoggedIn, setIsLoggedIn] = React.useState(false);
+  const [userId, setUserId] = React.useState<string>("Guest");
+  const handleAuthChange = React.useCallback(
+    (signedIn: boolean, displayLabel: string) => {
+      setIsLoggedIn(signedIn);
+      if (signedIn) {
+        setUserId(displayLabel);
+      } else {
+        setUserId("Guest");
+      }
+    },
+    [],
   );
-  const [authEmail, setAuthEmail] = React.useState("");
-  const [authPassword, setAuthPassword] = React.useState("");
-  const [authCode, setAuthCode] = React.useState("");
-  const [authLoading, setAuthLoading] = React.useState(false);
 
   // --- Configuration State ---
   const [apiBaseUrl, setApiBaseUrl] = React.useState<string>(() => {
@@ -56,9 +56,6 @@ export function App() {
       import.meta.env.VITE_API_BASE_URL ||
       "http://localhost:8080"
     );
-  });
-  const [userId, setUserId] = React.useState<string>(() => {
-    return isLoggedIn ? getCurrentUserEmail() : "admin";
   });
 
   // --- UI Layout State ---
@@ -140,18 +137,9 @@ export function App() {
     localStorage.setItem("messages_cache", JSON.stringify(messages));
   }, [messages]);
 
-  // Sync userId state dynamically with logged in user email
-  React.useEffect(() => {
-    if (isLoggedIn) {
-      setUserId(getCurrentUserEmail());
-    } else {
-      setUserId("admin");
-    }
-  }, [isLoggedIn]);
-
   // Fetch conversations from backend on mount or when API URL / Login State changes
   React.useEffect(() => {
-    if (!apiBaseUrl) return;
+    if (!apiBaseUrl || !isLoggedIn) return;
 
     let active = true;
     async function loadConversations() {
@@ -172,7 +160,7 @@ export function App() {
 
   // Fetch messages for active conversation from backend when activeConversationId changes
   React.useEffect(() => {
-    if (!activeConversationId || !apiBaseUrl) return;
+    if (!activeConversationId || !apiBaseUrl || !isLoggedIn) return;
 
     const convId = activeConversationId;
     const currentMessages = messages[convId] || [];
@@ -207,12 +195,12 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [activeConversationId, apiBaseUrl]);
+  }, [activeConversationId, apiBaseUrl, isLoggedIn]);
 
   // Automatic logout on unauthorized API errors (session expired)
   React.useEffect(() => {
     const handleUnauthorized = () => {
-      signOutUser();
+      void signOut();
       setIsLoggedIn(false);
       setActiveConversationId(null);
       toast({
@@ -226,64 +214,10 @@ export function App() {
     return () => {
       window.removeEventListener("unauthorized-api-error", handleUnauthorized);
     };
-  }, [toast]);
-
-  // --- Authentication Handlers ---
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authEmail.trim() || (!authPassword && authMode !== "VERIFY")) return;
-
-    setAuthLoading(true);
-    try {
-      if (authMode === "LOGIN") {
-        await signInUser(authEmail.trim(), authPassword);
-        setIsLoggedIn(true);
-        toast({
-          title: "Welcome back!",
-          description: "Login successful.",
-          type: "success",
-        });
-      } else if (authMode === "SIGNUP") {
-        await signUpUser(authEmail.trim(), authPassword);
-        setAuthMode("VERIFY");
-        toast({
-          title: "Account Created",
-          description: "Please check your email for the verification code.",
-          type: "info",
-        });
-      } else if (authMode === "VERIFY") {
-        if (!authCode.trim()) {
-          toast({
-            title: "Verification Code Required",
-            description: "Please enter the 6-digit confirmation code.",
-            type: "error",
-          });
-          setAuthLoading(false);
-          return;
-        }
-        await confirmSignUpUser(authEmail.trim(), authCode.trim());
-        setAuthMode("LOGIN");
-        setAuthCode("");
-        setAuthPassword("");
-        toast({
-          title: "Account Verified!",
-          description: "Verification successful. You can now log in.",
-          type: "success",
-        });
-      }
-    } catch (err: any) {
-      toast({
-        title: "Authentication Failed",
-        description: err.message || "Operation failed",
-        type: "error",
-      });
-    } finally {
-      setAuthLoading(false);
-    }
-  };
+  }, [toast, signOut]);
 
   const handleLogout = () => {
-    signOutUser();
+    void signOut();
     setIsLoggedIn(false);
     setActiveConversationId(null);
     toast({
@@ -484,7 +418,7 @@ export function App() {
     }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() && selectedImages.length === 0) return;
 
@@ -566,7 +500,7 @@ export function App() {
         };
       });
 
-      const token = getCurrentSessionToken();
+      const token = await getCurrentSessionToken();
       sendChatMessageStream(
         inputText.trim(),
         apiBaseUrl,
@@ -670,25 +604,26 @@ export function App() {
     ? messages[activeConversationId] || []
     : [];
 
+  if (!isClerkLoaded) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950 text-sm text-zinc-500">
+        Loading…
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return (
-      <AuthGate
-        authMode={authMode}
-        setAuthMode={setAuthMode}
-        authEmail={authEmail}
-        setAuthEmail={setAuthEmail}
-        authPassword={authPassword}
-        setAuthPassword={setAuthPassword}
-        authCode={authCode}
-        setAuthCode={setAuthCode}
-        authLoading={authLoading}
-        handleAuthSubmit={handleAuthSubmit}
-      />
+      <>
+        <ClerkAuthSync onAuthChange={handleAuthChange} />
+        <AuthGate />
+      </>
     );
   }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-zinc-50 font-sans text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+      <ClerkAuthSync onAuthChange={handleAuthChange} />
       {/* Sidebar Component */}
       <Sidebar
         isSidebarOpen={isSidebarOpen}

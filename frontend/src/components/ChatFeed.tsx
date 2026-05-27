@@ -306,7 +306,7 @@ export function ChatFeed({
             Serverless Chatbot Platform
           </h1>
           <p className="text-sm text-zinc-450 max-w-sm">
-            Securely authenticated via AWS Cognito. Deployed on AWS Lambda.
+            Securely authenticated via Clerk. Deployed on AWS Lambda.
           </p>
 
           <div className="flex gap-2 w-full max-w-md pt-4 justify-center">

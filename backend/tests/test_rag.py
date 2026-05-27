@@ -85,11 +85,69 @@ def test_chat_with_rag_injects_retrieved_context(test_client: TestClient) -> Non
     assert "AntigravityRAG2026" in llm_messages[0]["content"]
     assert "company_rules.txt" in llm_messages[0]["content"]
     assert getattr(test_client, "fake_vector_store").search_calls[-1] == {
-        "query_text": "What is the Wi-Fi password?",
+        "query_text": "What is the Wi-Fi password? (standalone)",
         "user_id": "admin",
         "top_k": 3,
         "documents": ["company_rules.txt"],
     }
+
+
+def test_chat_with_rag_follow_up_rewriting(test_client: TestClient) -> None:
+    # 1. Send first message to initialize a conversation and set history
+    first_response = test_client.post(
+        "/chat",
+        json={
+            "message": "Who is CEO of the company?",
+            "use_rag": True,
+            "rag_documents": ["company_rules.txt"],
+        },
+    )
+    assert first_response.status_code == 200
+    conv_id = first_response.json()["conversation_id"]
+
+    # Clear fake_llm messages to isolate the next turn's prompts
+    getattr(test_client, "fake_llm").messages.clear()
+
+    # 2. Send follow-up query
+    followup_response = test_client.post(
+        "/chat",
+        json={
+            "conversation_id": conv_id,
+            "message": "what is their contact email?",
+            "use_rag": True,
+            "rag_documents": ["company_rules.txt"],
+        },
+    )
+    assert followup_response.status_code == 200
+
+    # Verify that the LLM was called to reformulate the query with history
+    llm_calls = getattr(test_client, "fake_llm").messages
+    # There should be 2 LLM calls: 1 for reformulation, 1 for final response generation
+    assert len(llm_calls) >= 2
+
+    # Check the first call (reformulation)
+    reformulate_prompt = llm_calls[0][0]["content"]
+    assert "Conversation History:" in reformulate_prompt
+    assert "User: Who is CEO of the company?" in reformulate_prompt
+    # The assistant response in history should be "stubbed response" (from first turn)
+    assert "Assistant: stubbed response" in reformulate_prompt
+    assert "Follow-up Query: what is their contact email?" in reformulate_prompt
+
+    # Verify vector store searched with the reformulated query
+    assert getattr(test_client, "fake_vector_store").search_calls[-1]["query_text"] == "what is their contact email? (standalone)"
+
+
+def test_rag_search_uses_original_query(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/rag/search",
+        json={"query": "wifi password?", "top_k": 2},
+    )
+    assert response.status_code == 200
+    
+    # Check that original query was used (no reformulation for standalone search endpoint)
+    assert getattr(test_client, "fake_vector_store").search_calls[-1]["query_text"] == "wifi password?"
+
+
 
 
 def test_rag_file_ingest_text_file(test_client: TestClient) -> None:

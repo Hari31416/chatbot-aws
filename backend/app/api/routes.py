@@ -83,14 +83,45 @@ async def _build_chat_messages(
     vector_store,
     top_k: int,
     user_id: str,
+    llm,
 ) -> tuple[list[dict], list[dict]]:
     messages = build_history_messages(history)
     if not payload.use_rag:
         messages.append({"role": "user", "content": payload.message})
         return messages, []
 
+    # Format conversation history for reformulation prompt
+    history_lines = []
+    for msg in messages:
+        role = msg.get("role", "").capitalize()
+        content = msg.get("content", "")
+        history_lines.append(f"{role}: {content}")
+    history_text = "\n".join(history_lines) if history_lines else "None"
+
+    reformulate_prompt = (
+        "Given a conversation history and a follow-up query, rephrase the follow-up query to be a standalone, self-contained search query.\n"
+        "This standalone query will be used for document retrieval (semantic search).\n\n"
+        "Instructions:\n"
+        "1. The standalone query must not have any dependencies on past turns, vagueness, or reference keywords (like \"this\", \"that\", \"previous\", \"it\", \"they\", \"he\", \"she\", etc.).\n"
+        "2. Resolve any references or pronouns using the context of the conversation.\n"
+        "3. Perform spelling correction and optimize keywords for better search retrieval.\n"
+        "4. If there is no conversation history, simply correct any spelling errors and optimize the keywords of the query.\n"
+        "5. Do NOT add any preamble, explanation, extra commentary, or quotes. Output ONLY the rephrased standalone query.\n\n"
+        f"Conversation History:\n{history_text}\n\n"
+        f"Follow-up Query: {payload.message}\n\n"
+        "Standalone Query:"
+    )
+
+    try:
+        standalone_query = await llm.generate([{"role": "user", "content": reformulate_prompt}])
+        standalone_query = standalone_query.strip().strip('"').strip("'")
+        logger.info("Generated standalone query: '%s' from original: '%s'", standalone_query, payload.message)
+    except Exception as e:
+        logger.warning("Failed to generate standalone query: %s. Falling back to original query.", e)
+        standalone_query = payload.message
+
     context_results = await vector_store.similarity_search(
-        payload.message,
+        standalone_query,
         user_id=user_id,
         top_k=top_k,
         documents=payload.rag_documents,
@@ -176,6 +207,7 @@ async def chat(
             vector_store=vector_store,
             top_k=settings.rag_top_k,
             user_id=user_id,
+            llm=llm,
         )
 
         assistant_text = await llm.generate(messages)
@@ -304,6 +336,7 @@ async def chat_stream(
             vector_store=vector_store,
             top_k=settings.rag_top_k,
             user_id=user_id,
+            llm=llm,
         )
 
         async def token_generator():

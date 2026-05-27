@@ -25,6 +25,16 @@ class FakeLlmClient:
 
     async def generate(self, messages: list[dict]) -> str:
         self.messages.append(messages)
+        if messages and len(messages) == 1 and "standalone, self-contained search query" in messages[0].get("content", ""):
+            content = messages[0]["content"]
+            import re
+            match = re.search(r"Follow-up Query:\s*(.*)", content)
+            if not match:
+                match = re.search(r"User Query:\s*(.*)", content)
+            if match:
+                original_query = match.group(1).strip()
+                return f"{original_query} (standalone)"
+            return "standalone query"
         return "stubbed response"
 
     async def astream(self, messages: list[dict]):

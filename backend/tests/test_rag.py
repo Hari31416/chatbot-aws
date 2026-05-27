@@ -526,7 +526,7 @@ def test_rag_strict_context_and_empty_fallback(test_client: TestClient) -> None:
     llm_messages = getattr(test_client, "fake_llm").messages[-1]
     assert llm_messages[0]["role"] == "system"
     prompt_content = llm_messages[0]["content"]
-    assert "strictly based on the context provided" in prompt_content
+    assert "strictly and objectively using only the retrieved context" in prompt_content
     assert (
         "I can not answer the question based on the provided information."
         in prompt_content

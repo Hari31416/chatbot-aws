@@ -40,7 +40,7 @@ class RagService:
 
 
     async def ingest_document(
-        self, filename: str, content: str, user_id: str, document_id: str | None = None
+        self, filename: str, content: str, user_id: str, document_id: str | None = None, tags: list[str] | None = None
     ) -> RagIngestResult:
         chunks = self.split_text(content)
         if not document_id:
@@ -57,6 +57,7 @@ class RagService:
             source_doc=filename,
             document_id=document_id,
             user_id=user_id,
+            tags=tags,
         )
         return RagIngestResult(
             document_id=document_id,
@@ -64,7 +65,7 @@ class RagService:
         )
 
     async def ingest_binary_document(
-        self, filename: str, data: bytes, mime_type: str, user_id: str, document_id: str | None = None
+        self, filename: str, data: bytes, mime_type: str, user_id: str, document_id: str | None = None, tags: list[str] | None = None
     ) -> RagIngestResult:
         import os
         import asyncio
@@ -210,6 +211,7 @@ class RagService:
             document_id=document_id,
             user_id=user_id,
             page_numbers=page_numbers,
+            tags=tags,
         )
         return RagIngestResult(
             document_id=document_id,

@@ -9,11 +9,13 @@ class ChatRequest(BaseModel):
     user_id: str | None = None
     use_rag: bool = False
     rag_documents: list[str] | None = None
+    rag_tags: list[str] | None = None
 
 
 class RagIngestRequest(BaseModel):
     filename: str = Field(..., min_length=1, max_length=255)
     content: str = Field(..., min_length=1)
+    tags: list[str] | None = None
 
 
 class RagIngestResponse(BaseModel):
@@ -31,12 +33,14 @@ class RagDocumentResponse(BaseModel):
     created_at: str
     updated_at: str
     status: str = "ready"
+    tags: list[str] | None = None
 
 
 class RagSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=3, ge=1, le=20)
     documents: list[str] | None = None
+    tags: list[str] | None = None
 
 
 class RagSearchResult(BaseModel):

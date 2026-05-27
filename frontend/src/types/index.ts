@@ -30,6 +30,7 @@ export interface ChatRequest {
   user_id?: string | null;
   use_rag?: boolean;
   rag_documents?: string[] | null;
+  rag_tags?: string[] | null;
 }
 
 export interface ChatResponse {
@@ -52,4 +53,5 @@ export interface RagDocument {
   created_at: string;
   updated_at: string;
   status?: string;
+  tags?: string[] | null;
 }

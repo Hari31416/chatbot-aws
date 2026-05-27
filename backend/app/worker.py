@@ -79,6 +79,10 @@ async def process_staging_file(bucket_name: str, s3_key: str, user_id: str, docu
         # 3. Call RAG ingestion service
         rag_service = get_rag_service()
         
+        # Fetch tags from the DynamoDB staging placeholder
+        doc = await to_thread.run_sync(repo.get_rag_document, user_id, document_id)
+        tags = doc.get("tags") if doc else None
+        
         if is_binary:
             result = await rag_service.ingest_binary_document(
                 filename=filename,
@@ -86,6 +90,7 @@ async def process_staging_file(bucket_name: str, s3_key: str, user_id: str, docu
                 mime_type=content_type,
                 user_id=user_id,
                 document_id=document_id,
+                tags=tags,
             )
         else:
             try:
@@ -98,6 +103,7 @@ async def process_staging_file(bucket_name: str, s3_key: str, user_id: str, docu
                     mime_type=content_type,
                     user_id=user_id,
                     document_id=document_id,
+                    tags=tags,
                 )
             else:
                 result = await rag_service.ingest_document(
@@ -105,6 +111,7 @@ async def process_staging_file(bucket_name: str, s3_key: str, user_id: str, docu
                     content=content,
                     user_id=user_id,
                     document_id=document_id,
+                    tags=tags,
                 )
                 
         # 4. Update status in DynamoDB

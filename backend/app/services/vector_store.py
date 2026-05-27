@@ -102,6 +102,7 @@ class VectorStoreClient:
         document_id: str,
         user_id: str,
         page_numbers: Sequence[int | None] | None = None,
+        tags: list[str] | None = None,
     ) -> None:
         if not (len(keys) == len(texts) == len(embeddings)):
             raise ValueError("keys, texts, and embeddings must have matching lengths")
@@ -117,6 +118,8 @@ class VectorStoreClient:
             }
             if page_numbers and idx < len(page_numbers) and page_numbers[idx] is not None:
                 metadata["page"] = page_numbers[idx]
+            if tags:
+                metadata["tags"] = list(tags)
 
             vectors_payload.append(
                 {
@@ -159,6 +162,7 @@ class VectorStoreClient:
         user_id: str,
         top_k: int = 3,
         documents: Sequence[str] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         query_embeddings = await self.get_embeddings([query_text])
         if not query_embeddings:
@@ -173,7 +177,7 @@ class VectorStoreClient:
             "returnMetadata": True,
         }
 
-        query_args["filter"] = _build_query_filter(user_id, documents)
+        query_args["filter"] = _build_query_filter(user_id, documents, tags)
 
         try:
             response = await to_thread.run_sync(
@@ -211,13 +215,32 @@ def _is_already_exists_error(exc: ClientError) -> bool:
 
 
 def _build_query_filter(
-    user_id: str, documents: Sequence[str] | None
+    user_id: str, documents: Sequence[str] | None, tags: Sequence[str] | None = None
 ) -> dict[str, Any]:
     document_filter = _build_document_filter(documents)
+    tag_filter = _build_tags_filter(tags)
     user_filter = {"user_id": user_id}
-    if not document_filter:
+    
+    filters = [user_filter]
+    if document_filter:
+        filters.append(document_filter)
+    if tag_filter:
+        filters.append(tag_filter)
+        
+    if len(filters) == 1:
         return user_filter
-    return {"$and": [user_filter, document_filter]}
+    return {"$and": filters}
+
+
+def _build_tags_filter(tags: Sequence[str] | None) -> dict[str, Any] | None:
+    if not tags:
+        return None
+    unique_tags = [tag for tag in dict.fromkeys(tags) if tag]
+    if not unique_tags:
+        return None
+    if len(unique_tags) == 1:
+        return {"tags": unique_tags[0]}
+    return {"tags": {"$in": unique_tags}}
 
 
 def _build_document_filter(documents: Sequence[str] | None) -> dict[str, Any] | None:

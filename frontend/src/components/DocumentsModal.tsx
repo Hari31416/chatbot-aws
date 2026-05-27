@@ -41,6 +41,7 @@ export function DocumentsModal({
   // Paste text form state
   const [pasteFilename, setPasteFilename] = React.useState("");
   const [pasteContent, setPasteContent] = React.useState("");
+  const [tagsInput, setTagsInput] = React.useState("");
 
   // File upload state
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
@@ -50,17 +51,21 @@ export function DocumentsModal({
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null)
 
-  // Clean up state when closing/opening
   React.useEffect(() => {
     if (!isOpen) {
       setSelectedFile(null);
       setPasteFilename("");
       setPasteContent("");
+      setTagsInput("");
       setSearchQuery("");
       setActiveTab("catalog");
       setDeletingId(null)
     }
   }, [isOpen]);
+
+  React.useEffect(() => {
+    setTagsInput("");
+  }, [activeTab]);
 
   // Auto-poll if any document is processing
   React.useEffect(() => {
@@ -97,14 +102,20 @@ export function DocumentsModal({
       return;
     }
 
+    const tags = tagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
     try {
-      await ingestRagFile(file, apiBaseUrl);
+      await ingestRagFile(file, tags, apiBaseUrl);
       toast({
         title: "Ingestion Success!",
         description: `"${file.name}" has been successfully chunked and vectorized.`,
         type: "success",
       });
       setSelectedFile(null);
+      setTagsInput("");
       refetchDocuments();
       setActiveTab("catalog");
     } catch (err: any) {
@@ -136,9 +147,14 @@ export function DocumentsModal({
       name += ".txt";
     }
 
+    const tags = tagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
     setIsSubmitting(true);
     try {
-      await ingestRagDocument(name, pasteContent, apiBaseUrl);
+      await ingestRagDocument(name, pasteContent, tags, apiBaseUrl);
       toast({
         title: "Ingestion Success!",
         description: `"${name}" has been successfully vectorized.`,
@@ -146,6 +162,7 @@ export function DocumentsModal({
       });
       setPasteFilename("");
       setPasteContent("");
+      setTagsInput("");
       refetchDocuments();
       setActiveTab("catalog");
     } catch (err: any) {
@@ -350,12 +367,26 @@ export function DocumentsModal({
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-2.5">
                                 <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-                                <span
-                                  className="font-semibold text-zinc-800 dark:text-zinc-100 truncate max-w-xs md:max-w-sm"
-                                  title={doc.source_doc}
-                                >
-                                  {doc.source_doc || doc.filename}
-                                </span>
+                                <div className="flex flex-col min-w-0">
+                                  <span
+                                    className="font-semibold text-zinc-800 dark:text-zinc-100 truncate max-w-xs md:max-w-sm"
+                                    title={doc.source_doc}
+                                  >
+                                    {doc.source_doc || doc.filename}
+                                  </span>
+                                  {doc.tags && doc.tags.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {doc.tags.map((tag) => (
+                                        <span
+                                          key={tag}
+                                          className="px-1.5 py-0.5 text-[9px] font-semibold bg-blue-50/50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-md border border-blue-100 dark:border-blue-900/50"
+                                        >
+                                          {tag}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </td>
                             <td className="px-6 py-4">
@@ -480,6 +511,19 @@ export function DocumentsModal({
                     </Button>
                   </div>
 
+                  <div className="space-y-1.5 text-left">
+                    <label className="text-xs font-bold text-zinc-550 dark:text-zinc-350">
+                      Document Tags
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. HR, Policies, Q3 (comma-separated)"
+                      value={tagsInput}
+                      onChange={(e) => setTagsInput(e.target.value)}
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100 font-semibold"
+                    />
+                  </div>
+
                   {selectedFile && (
                     <div className="flex items-center justify-between p-3.5 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-xl animate-in slide-in-from-top-3">
                       <div className="flex items-center gap-3 min-w-0">
@@ -533,6 +577,19 @@ export function DocumentsModal({
                       value={pasteFilename}
                       onChange={(e) => setPasteFilename(e.target.value)}
                       required
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100 font-semibold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-zinc-550 dark:text-zinc-350">
+                      Document Tags
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. HR, Policies, Q3 (comma-separated)"
+                      value={tagsInput}
+                      onChange={(e) => setTagsInput(e.target.value)}
                       className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-zinc-800 dark:text-zinc-100 font-semibold"
                     />
                   </div>

@@ -242,28 +242,45 @@ class ConversationRepository:
         chunks_ingested: int,
         created_at: str,
         status: str = "ready",
+        tags: list[str] | None = None,
     ) -> None:
         logger.debug(
-            "put_rag_document user_id=%s document_id=%s filename=%s status=%s",
+            "put_rag_document user_id=%s document_id=%s filename=%s status=%s tags=%s",
             user_id,
             document_id,
             filename,
             status,
+            tags,
         )
+        item = {
+            "pk": pk_for_user(user_id),
+            "sk": rag_document_sk(created_at, document_id),
+            "user_id": user_id,
+            "document_id": document_id,
+            "filename": filename,
+            "source_doc": filename,
+            "chunks_ingested": chunks_ingested,
+            "status": status,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        if tags is not None:
+            item["tags"] = tags
         self._table.put_item(
-            Item=_float_to_decimal({
-                "pk": pk_for_user(user_id),
-                "sk": rag_document_sk(created_at, document_id),
-                "user_id": user_id,
-                "document_id": document_id,
-                "filename": filename,
-                "source_doc": filename,
-                "chunks_ingested": chunks_ingested,
-                "status": status,
-                "created_at": created_at,
-                "updated_at": created_at,
-            })
+            Item=_float_to_decimal(item)
         )
+
+    def get_rag_document(self, user_id: str, document_id: str) -> dict | None:
+        logger.debug("get_rag_document user_id=%s document_id=%s", user_id, document_id)
+        response = self._table.query(
+            KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
+            & Key("sk").begins_with("RAGDOC#")
+        )
+        items = response.get("Items", [])
+        for item in items:
+            if item.get("document_id") == document_id:
+                return _decimal_to_float(item)
+        return None
 
     def update_rag_document_status(
         self,

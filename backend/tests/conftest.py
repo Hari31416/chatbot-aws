@@ -157,18 +157,27 @@ class InMemoryConversationRepository:
         chunks_ingested: int,
         created_at: str,
         status: str = "ready",
+        tags: list[str] | None = None,
     ) -> None:
-        self._rag_documents.setdefault(user_id, []).append(
-            {
-                "document_id": document_id,
-                "filename": filename,
-                "source_doc": filename,
-                "chunks_ingested": chunks_ingested,
-                "status": status,
-                "created_at": created_at,
-                "updated_at": created_at,
-            }
-        )
+        item = {
+            "document_id": document_id,
+            "filename": filename,
+            "source_doc": filename,
+            "chunks_ingested": chunks_ingested,
+            "status": status,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        if tags is not None:
+            item["tags"] = tags
+        self._rag_documents.setdefault(user_id, []).append(item)
+
+    def get_rag_document(self, user_id: str, document_id: str) -> dict | None:
+        docs = self._rag_documents.get(user_id, [])
+        for doc in docs:
+            if doc["document_id"] == document_id:
+                return doc
+        return None
 
     def update_rag_document_status(
         self,
@@ -236,6 +245,7 @@ class FakeVectorStore:
         user_id: str,
         top_k: int = 3,
         documents: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> list[dict]:
         self.search_calls.append(
             {
@@ -243,8 +253,9 @@ class FakeVectorStore:
                 "user_id": user_id,
                 "top_k": top_k,
                 "documents": documents,
-            }
-        )
+                "tags": tags,
+              }
+          )
         return self.results
 
     async def delete_chunks(self, keys: list[str]) -> None:
@@ -256,20 +267,20 @@ class FakeRagService:
         self.ingested: list[dict] = []
 
     async def ingest_document(
-        self, filename: str, content: str, user_id: str
+        self, filename: str, content: str, user_id: str, document_id: str | None = None, tags: list[str] | None = None
     ) -> RagIngestResult:
         self.ingested.append(
-            {"filename": filename, "content": content, "user_id": user_id}
+            {"filename": filename, "content": content, "user_id": user_id, "tags": tags}
         )
         return RagIngestResult(document_id="doc-test", chunks_ingested=1)
 
     async def ingest_binary_document(
-        self, filename: str, data: bytes, mime_type: str, user_id: str
+        self, filename: str, data: bytes, mime_type: str, user_id: str, document_id: str | None = None, tags: list[str] | None = None
     ) -> RagIngestResult:
         if "limit_exceeded" in filename:
             raise ValueError("Document exceeds maximum page limit of 100 pages (got 150 pages)")
         self.ingested.append(
-            {"filename": filename, "data": data, "mime_type": mime_type, "user_id": user_id}
+            {"filename": filename, "data": data, "mime_type": mime_type, "user_id": user_id, "tags": tags}
         )
         return RagIngestResult(document_id="doc-test", chunks_ingested=2)
 

@@ -317,6 +317,7 @@ export async function deleteRagDocument(
 export async function ingestRagDocument(
   filename: string,
   content: string,
+  tags: string[],
   apiBaseUrl: string,
 ): Promise<{
   status: string;
@@ -337,7 +338,7 @@ export async function ingestRagDocument(
   const response = await fetch(`${cleanUrl}/rag/ingest`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ filename, content }),
+    body: JSON.stringify({ filename, content, tags }),
   });
 
   return handleResponse<{
@@ -353,6 +354,7 @@ export async function ingestRagDocument(
  */
 export async function ingestRagFile(
   file: File,
+  tags: string[],
   apiBaseUrl: string,
 ): Promise<{
   status: string;
@@ -364,6 +366,9 @@ export async function ingestRagFile(
   const token = await getCurrentSessionToken();
   const formData = new FormData();
   formData.append("file", file);
+  if (tags && tags.length > 0) {
+    formData.append("tags", JSON.stringify(tags));
+  }
 
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -415,7 +420,7 @@ export async function sendChatMessageStream(
     citations?: any[] | null,
   ) => void,
   onError?: (error: string) => void,
-  ragOptions?: Pick<ChatRequest, "use_rag" | "rag_documents">,
+  ragOptions?: Pick<ChatRequest, "use_rag" | "rag_documents" | "rag_tags">,
 ): Promise<void> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
   try {
@@ -435,6 +440,7 @@ export async function sendChatMessageStream(
         conversation_id: conversationId,
         use_rag: ragOptions?.use_rag ?? false,
         rag_documents: ragOptions?.rag_documents ?? null,
+        rag_tags: ragOptions?.rag_tags ?? null,
       }),
     });
 

@@ -160,6 +160,7 @@ async def chat(
                 user_id=user_id,
                 top_k=settings.rag_top_k,
                 documents=payload.rag_documents,
+                tags=payload.rag_tags,
             )
 
             # Format the context
@@ -337,6 +338,7 @@ async def chat_stream(
                 user_id=user_id,
                 top_k=settings.rag_top_k,
                 documents=payload.rag_documents,
+                tags=payload.rag_tags,
             )
 
             # Format the context
@@ -650,6 +652,7 @@ async def ingest_rag_text(
         0,
         created_at,
         "processing",
+        payload.tags,
     )
 
     s3_key = f"staging/{user_id}/{document_id}/{payload.filename}"
@@ -672,12 +675,13 @@ async def ingest_rag_text(
 )
 async def ingest_rag_file(
     file: UploadFile = File(...),
+    tags: str | None = Form(None),
     repo=Depends(get_repository),
     storage=Depends(get_storage),
     user_id: str = Depends(get_current_user_id),
 ) -> RagIngestResponse:
     filename = file.filename or "uploaded_document"
-    logger.info("RAG file ingest request filename=%s user_id=%s", filename, user_id)
+    logger.info("RAG file ingest request filename=%s user_id=%s tags=%s", filename, user_id, tags)
 
     # 1. Enforce 20MB maximum file size limit
     data = await file.read()
@@ -694,6 +698,15 @@ async def ingest_rag_file(
             detail=f"File exceeds maximum size of 20MB (got {size_bytes / (1024 * 1024):.1f}MB)",
         )
 
+    parsed_tags = None
+    if tags:
+        try:
+            parsed_tags = json.loads(tags)
+            if not isinstance(parsed_tags, list):
+                parsed_tags = [str(parsed_tags)]
+        except Exception:
+            parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
+
     document_id = str(uuid4())
     created_at = utcnow_iso()
 
@@ -706,6 +719,7 @@ async def ingest_rag_file(
         0,
         created_at,
         "processing",
+        parsed_tags,
     )
 
     # 3. Upload raw file to S3 under staging prefix
@@ -740,6 +754,7 @@ async def list_rag_documents(
             created_at=item.get("created_at"),
             updated_at=item.get("updated_at", item.get("created_at")),
             status=item.get("status", "ready"),
+            tags=item.get("tags"),
         )
         for item in items
     ]
@@ -794,6 +809,7 @@ async def search_rag_context(
             user_id=user_id,
             top_k=payload.top_k,
             documents=payload.documents,
+            tags=payload.tags,
         )
     except Exception as exc:
         logger.exception("RAG search failed")

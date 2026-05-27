@@ -89,6 +89,7 @@ def test_chat_with_rag_injects_retrieved_context(test_client: TestClient) -> Non
         "user_id": "admin",
         "top_k": 3,
         "documents": ["company_rules.txt"],
+        "tags": None,
     }
 
 
@@ -202,6 +203,7 @@ class MockVectorStore:
         document_id,
         user_id,
         page_numbers=None,
+        tags=None,
     ):
         self.upserts.append(
             {
@@ -212,6 +214,7 @@ class MockVectorStore:
                 "document_id": document_id,
                 "user_id": user_id,
                 "page_numbers": page_numbers,
+                "tags": tags,
             }
         )
 
@@ -339,6 +342,7 @@ def test_worker_handler_success() -> None:
     from app.services.rag import RagIngestResult
 
     mock_repo = MagicMock()
+    mock_repo.get_rag_document.return_value = {"tags": None}
     mock_s3 = MagicMock()
     mock_rag = MagicMock()
 
@@ -389,6 +393,7 @@ def test_worker_handler_success() -> None:
         content="some document text content",
         user_id="user-456",
         document_id="doc-123",
+        tags=None,
     )
 
     mock_repo.update_rag_document_status.assert_called_with(
@@ -546,3 +551,47 @@ def test_rag_strict_context_and_empty_fallback(test_client: TestClient) -> None:
     assert llm_messages_no_ctx[0]["role"] == "system"
     no_ctx_prompt = llm_messages_no_ctx[0]["content"]
     assert "No relevant context found." in no_ctx_prompt
+
+
+def test_rag_ingest_endpoint_with_tags(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/rag/ingest",
+        json={
+            "filename": "company_rules.txt",
+            "content": "The secure Wi-Fi password is AntigravityRAG2026.",
+            "tags": ["HR", "Finance"],
+        },
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status"] == "processing"
+    assert payload["filename"] == "company_rules.txt"
+    assert payload["document_id"]
+    
+    # Verify the document was put in DynamoDB with tags
+    fake_repo = getattr(test_client, "fake_repo")
+    doc = fake_repo.get_rag_document("admin", payload["document_id"])
+    assert doc is not None
+    assert doc["tags"] == ["HR", "Finance"]
+
+
+def test_chat_with_rag_tags_filtering(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/chat",
+        json={
+            "message": "What is the Wi-Fi password?",
+            "use_rag": True,
+            "rag_tags": ["HR"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert getattr(test_client, "fake_vector_store").search_calls[-1] == {
+        "query_text": "What is the Wi-Fi password? (standalone)",
+        "user_id": "admin",
+        "top_k": 3,
+        "documents": None,
+        "tags": ["HR"],
+    }
+

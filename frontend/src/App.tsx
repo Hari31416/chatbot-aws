@@ -91,6 +91,7 @@ export function App() {
   const [imagePreviewUrls, setImagePreviewUrls] = React.useState<string[]>([]);
   const [useRag, setUseRag] = React.useState(false);
   const [ragDocumentsText, setRagDocumentsText] = React.useState("");
+  const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
@@ -602,6 +603,7 @@ export function App() {
         {
           use_rag: useRag,
           rag_documents: ragDocuments.length > 0 ? ragDocuments : null,
+          rag_tags: selectedTags.length > 0 ? selectedTags : null,
         },
       );
     }
@@ -725,6 +727,8 @@ export function App() {
           ragDocumentsText={ragDocumentsText}
           setRagDocumentsText={setRagDocumentsText}
           ragDocuments={ragDocuments}
+          selectedTags={selectedTags}
+          setSelectedTags={setSelectedTags}
         />
       </main>
 

@@ -70,7 +70,7 @@ export async function sendTextMessage(
   apiBaseUrl: string,
 ): Promise<ChatResponse> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -124,7 +124,7 @@ export async function sendImageMessage(
     formData.append("user_id", userId);
   }
 
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -155,7 +155,7 @@ export async function fetchConversations(
   apiBaseUrl: string,
 ): Promise<Conversation[]> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -182,7 +182,7 @@ export async function fetchConversationMessages(
   apiBaseUrl: string,
 ): Promise<Message[]> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -210,7 +210,7 @@ export async function updateConversationName(
   apiBaseUrl: string,
 ): Promise<Conversation> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -239,7 +239,7 @@ export async function deleteConversationApi(
   apiBaseUrl: string,
 ): Promise<{ deleted: boolean; conversation_id: string }> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -265,7 +265,7 @@ export async function fetchRagDocuments(
   apiBaseUrl: string,
 ): Promise<RagDocument[]> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -298,7 +298,7 @@ export async function ingestRagDocument(
   chunks_ingested: number;
 }> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -334,7 +334,7 @@ export async function ingestRagFile(
   chunks_ingested: number;
 }> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const token = getCurrentSessionToken();
+  const token = await getCurrentSessionToken();
   const formData = new FormData();
   formData.append("file", file);
 

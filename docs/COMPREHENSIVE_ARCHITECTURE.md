@@ -16,12 +16,6 @@ Below are the visual reference diagrams outlining both the high-level system bou
 
 ![High-Level RAG AWS Architecture](../images/rag_aws_architecture.png)
 
-#### Detailed Event-Driven Ingestion & Vector Search Pipeline
-
-![Detailed RAG AWS Architecture Detail](../images/rag_aws_architecture_detail.png)
-
----
-
 ## 2. End-to-End Logical Flows
 
 When a user interacts with the system, their requests traverse distinct pathways depending on the operation:

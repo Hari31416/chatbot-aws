@@ -34,10 +34,10 @@ A **serverless-ready chatbot API** that:
 ```
 Client (Vite React App)
   │
-  ├── GET/POST /conversations, /chat/image ──► API Gateway (Cognito Auth) ──► Lambda (FastAPI + Mangum)
+  ├── GET/POST /conversations, /chat/image ──► API Gateway ────────────────► Lambda (FastAPI + Mangum / In-App Clerk Auth)
   │
   └── POST /chat/stream (SSE stream) ───────► Lambda Function URL ─────────► LWA Layer ──► FastAPI Routes
-                                                (In-App PyJWT Auth)
+                                                (In-App Clerk Auth / PyJWT)
 ```
 
 ### AWS Services Used (All Free-Tier Eligible)

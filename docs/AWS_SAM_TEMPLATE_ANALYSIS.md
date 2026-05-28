@@ -507,7 +507,7 @@ ChatbotHttpApi:
 In this template, API Gateway does not declare a default edge authorizer. Instead, token verification is handled entirely within backend application code using a custom FastAPI OIDC token validation dependency.
 
 - **Unified Auth Logic:** Both API Gateway REST endpoints and Lambda Function URL (FURL) streaming endpoints route unauthenticated traffic directly to the Lambda function. The FastAPI application decodes, caches, and verifies Clerk JWT signatures.
-- **Why it was designed this way:** Bypassing API Gateway's built-in Cognito authorizer allows a single, unified codebase to secure both the REST API and the unbuffered streaming FURL paths. This reduces configuration complexity, avoids duplicating OIDC configs in AWS, and guarantees consistent authentication behavior across all request pathways.
+- **Why it was designed this way:** Bypassing API Gateway's built-in OIDC/Cognito authorizers allows a single, unified codebase to secure both the REST API and the unbuffered streaming FURL paths. This reduces configuration complexity, avoids duplicating OIDC configs in AWS, and guarantees consistent authentication behavior across all request pathways.
 
 ---
 

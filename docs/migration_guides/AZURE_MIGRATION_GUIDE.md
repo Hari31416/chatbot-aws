@@ -69,7 +69,7 @@ The serverless, event-driven flow translates natively into Azure's ecosystem.
 | :--- | :--- | :--- | :--- |
 | **AWS Lambda + LWA (FastAPI)** | **Azure Container Apps (ACA)** | **Low** | Packaged as a standard container. Deploy directly to ACA. Remove `AWS Lambda Web Adapter` layer; ACA supports native ingress routing. |
 | **AWS Lambda Function URL** | **Azure Container Apps Ingress** | **Low** | Expose Container App endpoints with Ingress. ACA natively supports HTTP Chunked Transfer Encoding (Response Streaming). |
-| **Amazon Cognito User Pools** | **Microsoft Entra External ID** | **Medium** | Swap Amplify JS SDK on frontend for **MSAL.js**. Backend uses standard Entra JWKS endpoints to verify JWT signatures. |
+| **Clerk Authentication**      | **Microsoft Entra External ID** or keep **Clerk** | **Low** | Keep Clerk since it is cloud-agnostic, or swap for MSAL.js. Backend uses the provider's JWKS endpoints to verify JWT signatures offline. |
 | **Amazon DynamoDB** | **Azure Cosmos DB for NoSQL** | **Medium** | Recreate Single-Table design inside a Cosmos container. Swap key schemas using partitions and indexes. Cosmos DB supports `TimeToLive` natively. |
 | **Amazon S3 (Uploads)** | **Azure Blob Storage** | **Low** | Swap S3 client operations to Azure Blob Storage client. Map S3 Presigned URLs to Azure Blob Shared Access Signatures (SAS) URLs. |
 | **Amazon S3 (Frontend Site)** | **Azure Static Web Apps (ASWA)** | **Low** | Ideal target. ASWA hosts standard React/Vite outputs, handles CDN distribution, custom domains, and sets up SPA routing fallback configurations. |
@@ -93,7 +93,7 @@ These services cost **$0.00** forever under moderate development use, regardless
   * *Grant:* Unlimited hosting, free SSL certificates, custom domains, integrated global CDN, and 100 GB of outbound bandwidth per month.
   * *Role:* Chatbot React/Vite Frontend interface.
 * **Microsoft Entra External ID:**
-  * *Grant:* **50,000 Monthly Active Users (MAUs)** completely free! (Cognito's equivalent free tier caps at 10,000).
+  * *Grant:* **50,000 Monthly Active Users (MAUs)** completely free! (Clerk's equivalent free tier caps at 10,000).
   * *Role:* User authentication, sign-ups, and logins.
 * **Azure Container Apps (ACA):**
   * *Grant:* **180,000 vCPU-seconds, 360,000 GiB-seconds, and 2 million requests** free *every single month*. 
@@ -175,7 +175,7 @@ In Azure, this orchestration maps to a modern, developer-friendly ecosystem:
 │ template.yaml (SAM/CFN)         │ Azure Bicep (.bicep)             │
 │ sam build / sam deploy          │ Azure Developer CLI (azd)        │
 │ sam local (Lambda emulation)    │ Azure Functions Core Tools       │
-│ AWS Cognito Auth Emulation      │ Azure Static Web Apps (SWA) CLI  │
+│ AWS/Clerk Auth Emulation        │ Azure Static Web Apps (SWA) CLI  │
 └─────────────────────────────────┴──────────────────────────────────┘
 ```
 

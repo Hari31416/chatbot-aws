@@ -1,8 +1,8 @@
 # Serverless Chatbot with RAG on AWS
 
-A production-grade, secure, and fully serverless AI Chatbot with RAG (Retrieval-Augmented Generation) system. The application is built using a decoupled Python FastAPI backend and a TypeScript React SPA frontend. Deployed in a single step using the AWS Serverless Application Model (SAM), the platform achieves serverless real-time streaming, enterprise authentication, and robust asynchronous document ingestion.
+A production-grade, secure, and fully serverless AI Chatbot with RAG (Retrieval-Augmented Generation) system. The application is built using a decoupled Python FastAPI backend and a TypeScript React SPA frontend. Deployed in a single step using the AWS Serverless Application Model (SAM), the platform achieves serverless real-time streaming, secure authentication, and robust asynchronous document ingestion.
 
-The architecture features Server-Sent Events (SSE) streaming through AWS Lambda Web Adapter, Cognito-based JWT authentication, private multimodal attachment storage in S3, and a decoupled event-driven RAG ingestion pipeline using Amazon SQS, AWS Textract, and native Amazon S3 Vectors for embedding storage and similarity search.
+The architecture features Server-Sent Events (SSE) streaming through AWS Lambda Web Adapter, Clerk-based JWT authentication, private multimodal attachment storage in S3, and a decoupled event-driven RAG ingestion pipeline using Amazon SQS, AWS Textract, and native Amazon S3 Vectors for embedding storage and similarity search.
 
 ---
 
@@ -13,7 +13,7 @@ The entire platform is built with a serverless-first philosophy, ensuring high s
 - **Vite React SPA** is compiled into static assets and hosted in a public Amazon S3 bucket configured for static website hosting.
 - **FastAPI Backend Application** runs inside an arm64 AWS Lambda function. Traffic is handled by API Gateway HTTP API v2 and Lambda Function URLs.
 - **AWS Lambda Web Adapter (LWA)** serves as the execution wrapper on Lambda. In response streaming mode (`response_stream`), it bridges the FastAPI application's ASGI Server-Sent Events (SSE) directly to the client via Lambda Function URLs, bypassing API Gateway's lack of native streaming support.
-- **AWS Cognito User Pool** provides secure user registration, sign-in, and session management. API Gateway uses a Cognito Authorizer to validate JWTs in the `Authorization` header.
+- **Clerk Authentication** provides secure user registration, sign-in, and session management, while the backend FastAPI application validates Clerk JWTs in the `Authorization` header.
 - **Amazon SQS Ingestion Queue** handles background document processing. When a document is uploaded, it lands in the staging area of a private S3 bucket. This triggers an S3 Event Notification to SQS, decoupling the ingestion workload from the API request lifecycle.
 - **Asynchronous Ingestion Worker** is an isolated Lambda function triggered by SQS. It downloads files, processes multi-page binaries using AWS Textract, splits and chunks text, computes embeddings via LiteLLM, indexes them in a native **Amazon S3 Vectors** store, and updates the document status in DynamoDB.
 
@@ -29,7 +29,7 @@ To understand the system structure and processing workflows, refer to the diagra
 ```mermaid
 graph TD
     Client["Client (Vite React SPA on S3)"]
-    Cognito["AWS Cognito (User Pool & Client ID)"]
+    Clerk["Clerk Auth (User Registry & JWKS Provider)"]
     APIGW["API Gateway HTTP API v2"]
     LambdaStream["Lambda Function (FastAPI via LWA Response Streaming)"]
     DDB["DynamoDB Single-Table"]
@@ -42,10 +42,10 @@ graph TD
     Worker["Worker Lambda Function (app.worker.handler)"]
     Textract["AWS Textract"]
 
-    Client -->|1. Authenticate & Obtain JWT| Cognito
+    Client -->|1. Authenticate & Obtain JWT| Clerk
     Client -->|2. HTTP Request with Bearer Token| APIGW
     Client -->|3. SSE Token Stream| LambdaStream
-    APIGW -->|4. Proxy with Cognito Auth| LambdaStream
+    APIGW -->|4. Proxy to Lambda| LambdaStream
     LambdaStream -->|5. Store/Load History & CTX TTL| DDB
     LambdaStream -->|6. Upload Image attachments| S3Storage
     LambdaStream -->|7. Decrypt API Keys at start| SSM
@@ -73,7 +73,7 @@ graph TD
 | **Amazon S3 (Private Bucket)** | Secure storage for staging documents and presigned image attachments | SIZE + REQUESTS (5 GB free tier) |
 | **Amazon S3 (Public Bucket)** | Hosts static compiled React, TypeScript, and TailwindCSS assets | SIZE + REQUESTS (5 GB free tier) |
 | **Amazon S3 Vectors** | Fully native vector database index layered directly on top of Amazon S3 | SIZE + COMPUTE (Serverless, cheap high-density search) |
-| **AWS Cognito** | Authenticates users, validates passwords, and issues JWT secure tokens | MAUs (50,000 Monthly Active Users free tier) |
+| **Clerk Auth** | External provider that authenticates users, manages sessions, and issues JWT secure tokens | MAUs (10,000 Monthly Active Users free tier) |
 | **AWS Textract** | Extracts layouts and text lines from multi-page PDFs, TIFFs, and PNGs | PER-PAGE (1,000 pages/month free tier) |
 | **DynamoDB (PAY_PER_REQUEST)** | Stores conversation metadata, messages list, and context cache | PAY-PER-REQUEST (25 GB free storage) |
 | **SSM Parameter Store** | Secure encrypted KMS storage of LiteLLM API credentials | FREE (Standard Parameters) |
@@ -83,7 +83,7 @@ graph TD
 ## Key Features
 
 - **Serverless response streaming (SSE)** — Real-time response token streaming using `astream` via Lambda Web Adapter and Lambda Function URLs, bypassing API Gateway timeouts.
-- **Enterprise authentication (Cognito)** — Comprehensive user registration, account confirmation, secure sign-in, and JWT verification across endpoints.
+- **Clerk authentication** — Comprehensive user registration, secure sign-in, session management, and JWT verification across endpoints.
 - **Decoupled asynchronous RAG ingestion** — Multipart file uploads are immediately accepted with an HTTP `202` response. A background worker handles layout parsing (via Textract), text splitting, embedding generation, and vector index updates.
 - **Fully native vector search** — Powered by Amazon S3 Vectors. Supports dense similarity searches scoped by `user_id` without external database servers.
 - **Multimodal chat** — Upload PNG, JPEG, and WebP images (≤ 5MB) during conversations. Images are stored privately in S3, and served using expiring presigned URLs (1-hour TTL).
@@ -106,7 +106,7 @@ graph TD
 | **Compute** | AWS Lambda, Lambda Web Adapter (LWA) | Serverless API runtime and serverless streaming adapter |
 | **Database** | Amazon DynamoDB | Conversation history storage and context cache |
 | **Vector DB** | Amazon S3 Vectors | Native serverless vector store for RAG embeddings |
-| **Authentication** | AWS Cognito User Pools | Multi-tenant user login and JWT token validation |
+| **Authentication** | Clerk Auth | User login, session management, and JWT token validation |
 | **Document Processing** | AWS Textract, SQS, SQS DLQ | Layout extraction, task queuing, and DLQ error fallback |
 
 ---
@@ -167,7 +167,7 @@ chatbot-aws/
         ├── types/           # TypeScript interfaces for API payloads and entities
         │
         └── services/
-            ├── auth.ts      # Cognito integration wrapper for login, confirm, and signup
+            ├── auth.ts      # Clerk session token bridge for non-React API calls
             └── api.ts       # HTTP client endpoints and real-time SSE stream reader
 ```
 
@@ -314,7 +314,7 @@ pnpm install
 
 # 3. Configure local frontend environment variables
 cp .env.example .env
-# Edit .env and match the Cognito credentials generated from your deployed AWS stack,
+# Edit .env and match the Clerk credentials (VITE_CLERK_PUBLISHABLE_KEY) from your Clerk dashboard,
 # or point VITE_API_BASE_URL to your local backend (http://localhost:8080).
 
 # 4. Start the Vite React development server
@@ -361,13 +361,13 @@ aws ssm put-parameter \
 The backend build packages your Python modules, exports the `requirements.txt` file, builds the container wrapper, and invokes AWS SAM to provision all AWS resources.
 
 ```bash
-# Deploys backend and prints SAM Stack Outputs (Cognito IDs, FunctionUrl, API Gateway)
+# Deploys backend and prints SAM Stack Outputs (FunctionUrl, API Gateway)
 make deploy-backend
 ```
 
 ### 3. Deploy Frontend Assets
 
-The frontend compilation fetches active CloudFormation outputs (Cognito Client ID, User Pool ID, and Lambda Function URL) from the active backend stack, injects them as build-time environment variables into Vite, builds the application, and uploads them to the public static S3 bucket.
+The frontend compilation fetches active CloudFormation outputs (Lambda Function URL, etc.) from the active backend stack, injects them alongside the Clerk Publishable Key as build-time environment variables into Vite, builds the application, and uploads them to the public static S3 bucket.
 
 ```bash
 # Bundles React production code and syncs to your static S3 Bucket
@@ -417,11 +417,11 @@ curl -X GET https://<api-id>.execute-api.<region>.amazonaws.com/health
 
 ### 3. Send a Secure Chat Message
 
-Authentication is required for all chat routes. Once authenticated via Cognito, pass the JWT token inside the `Authorization` header.
+Authentication is required for all chat routes. Once authenticated via Clerk, pass the JWT token inside the `Authorization` header.
 
 ```bash
 curl -X POST https://<function-url-id>.lambda-url.<region>.on.aws/chat \
-  -H "Authorization: Bearer <your_cognito_jwt_token>" \
+  -H "Authorization: Bearer <your_clerk_jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "What are the benefits of event-driven architectures?",
@@ -447,7 +447,7 @@ For streaming, connect directly to the streaming Lambda Function URL using Serve
 
 ```bash
 curl -N -X POST https://<function-url-id>.lambda-url.<region>.on.aws/chat/stream \
-  -H "Authorization: Bearer <your_cognito_jwt_token>" \
+  -H "Authorization: Bearer <your_clerk_jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Explain quantum computing in one sentence.",
@@ -472,7 +472,7 @@ Upload a physical binary document (PDF, PNG, JPEG, TIFF) up to 20MB. The API ret
 
 ```bash
 curl -X POST https://<function-url-id>.lambda-url.<region>.on.aws/rag/ingest/file \
-  -H "Authorization: Bearer <your_cognito_jwt_token>" \
+  -H "Authorization: Bearer <your_clerk_jwt_token>" \
   -F "file=@financial_report.pdf"
 ```
 
@@ -492,7 +492,7 @@ Poll or fetch the RAG catalog to check the status of your uploaded document.
 
 ```bash
 curl -X GET https://<function-url-id>.lambda-url.<region>.on.aws/rag/documents \
-  -H "Authorization: Bearer <your_cognito_jwt_token>"
+  -H "Authorization: Bearer <your_clerk_jwt_token>"
 ```
 
 Response:
@@ -538,5 +538,7 @@ All application parameters are loaded by `pydantic-settings` from environment va
 | **MAX_IMAGE_BYTES** | `5242880` | Max file upload limit for image attachments (5 MB) |
 | **ALLOWED_IMAGE_MIME_TYPES**| `image/png,image/jpeg,image/webp` | Accepted mime-types for multimodal analysis |
 | **LOG_LEVEL** | `INFO` | Level of logging output (DEBUG, INFO, WARNING, ERROR) |
-| **COGNITO_USER_POOL_ID** | _None_ | AWS Cognito User Pool identifier |
-| **COGNITO_CLIENT_ID** | _None_ | AWS Cognito User Pool Client application ID |
+| **CLERK_ISSUER** | _None_ | Clerk OIDC Issuer URL |
+| **CLERK_JWKS_URL** | _None_ | Clerk JWKS URL (optional, inferred from issuer) |
+| **CLERK_AUTHORIZED_PARTIES** | _None_ | Comma-separated list of allowed origins (for azp check) |
+| **CLERK_SECRET_KEY** | _None_ | Clerk Secret Key (optional) |

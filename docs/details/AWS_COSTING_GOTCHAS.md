@@ -10,12 +10,12 @@ By default, every time your Lambda functions or CloudFront distributions execute
 - **The Trap:** The S3 Free Tier (5 GB) only applies to the standard **S3 Standard** tier. If you inadvertently configure your code to upload objects directly to `S3 Standard-IA` (Infrequent Access) or activate automatic multi-region cross-region replication, you will bypass the free tier and start paying for replication bandwidth and storage.
 - **The Fix:** Stick entirely to a single region and ensure your storage bucket uploads default to standard storage.
 
-## 3. Cognito "Plus" Tier vs. Lite/Essentials
+## 3. Clerk Free Plan Limits
 
-Cognito recently restructured its pricing into **Lite, Essentials, and Plus** tiers.
+Clerk manages user authentication externally and provides a generous free plan.
 
-- **The Trap:** The legendary **10,000 Monthly Active Users (MAU) free tier** only applies if your user pool is set to the _Lite_ or _Essentials_ tiers. If you accidentally toggle on the **Plus** tier (which activates advanced threat protection and compliance features), **the free tier drops to zero** and you are charged a flat $0.02 per active user from user number one.
-- **The Fix:** Check your Cognito User Pool settings and keep the feature plan set to **Lite** or **Essentials**. Also, stick to App/TOTP authentication; using **SMS for MFA** sends messages via Amazon SNS, which is never free and charges per text message.
+- **The Trap:** Clerk's standard free tier includes up to **50,000 Monthly Active Users (MAUs)**. Exceeding this limit, adding advanced security features, or configuring custom SMS gateways for multi-factor authentication can lead to overage charges or require upgrading to paid tiers.
+- **The Fix:** Monitor active users in your Clerk Dashboard. Stick to standard email/password or email OTP sign-ins to keep usage well within the free tier.
 
 ## 4. DynamoDB Provisioned vs. On-Demand Capacity
 

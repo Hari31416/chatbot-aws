@@ -15,13 +15,13 @@ When a user interacts with this chatbot, their request flows through these servi
 1. User Browser ──────(Loads HTML/CSS/JS)──────► Amazon S3 Frontend Bucket (Public Web Server)
 
 [ SIGN-UP / LOG-IN ]
-2. User Browser ──────(Register/Authenticate)──► Amazon Cognito User Pools (Secure User Directory)
+2. User Browser ──────(Register/Authenticate)──► Clerk Auth (Secure External User Directory & JWT Provider)
 
 [ SECURED DATABASE & IMAGE ACTIONS (REST) ]
-3. User Browser ──────(Requests /conversations)► Amazon API Gateway (Verifies Cognito JWT Token)
+3. User Browser ──────(Requests /conversations)► Amazon API Gateway (Routes request to Lambda)
                                                         │
                                                         ▼
-                                                  AWS Lambda (Compute Backend runs FastAPI)
+                                                  AWS Lambda (FastAPI verifies Clerk JWT)
                                                         │
                                              ┌──────────┴──────────┐
                                              ▼                     ▼
@@ -40,10 +40,10 @@ When a user interacts with this chatbot, their request flows through these servi
                                    (Vector RAG Database)    (PDF Layout parsing)
 
 [ EVENT-DRIVEN ASYNCHRONOUS DOCUMENT INGESTION (RAG) ]
-5. User Browser ──────(Uploads Document)───────► Amazon API Gateway (Verifies Cognito JWT Token)
+5. User Browser ──────(Uploads Document)───────► Amazon API Gateway (Routes request to Lambda)
                                                         │
                                                         ▼
-                                                  AWS Lambda (Compute Backend runs FastAPI)
+                                                  AWS Lambda (FastAPI verifies Clerk JWT)
                                                         │
                                                         ▼
                                                   Amazon S3 Uploads (prefix: staging/)
@@ -94,14 +94,14 @@ Below is the breakdown of the **12 AWS Services** utilized in this project.
 
 ### 2. Amazon API Gateway (HTTP API v2)
 
-> **Friendly Analogy:** Think of API Gateway as a "secure front gate keeper" at an apartment building. It checks the credentials of incoming visitors and guides them to the correct apartment.
+> **Friendly Analogy:** Think of API Gateway as a "front gate keeper" at an apartment building. It guides incoming visitors to the correct apartment.
 
-- **Role in this Chatbot:** It acts as the secure entry point for standard REST requests (like checking API health, creating user accounts, and fetching conversation history). It receives requests, validates the security token (Cognito JWT), and routes them to the Lambda function.
-- **Why it's cool:** It automatically handles browser security preflights (CORS) and stops bad or unauthorized requests _before_ they can reach and trigger your database or Lambda, saving you computing costs.
+- **Role in this Chatbot:** It acts as the entry point for standard REST requests (like checking API health and fetching conversation history). It receives requests and routes them to the Lambda function, where the Clerk JWT token is validated in-app.
+- **Why it's cool:** It automatically handles browser security preflights (CORS) and routes traffic cleanly, while token validation is delegated to the FastAPI application layer.
 - **Key Concepts to Study & Google:**
   - _REST APIs vs. HTTP APIs (v2)_ (HTTP APIs are newer, faster, and 70% cheaper than traditional REST APIs!)
   - _CORS (Cross-Origin Resource Sharing)_ preflight checks
-  - _API Gateway Authorizers_ (Cognito JWT Integration)
+  - _In-App JWT Authentication_ (Clerk JWT integration)
 - **️ Pro Tip & Cost Trap:**
   - _The Trap:_ Traditional REST APIs (v1) charge a lot for features you don't need for a simple app.
   - _The Fix:_ Use the newer **HTTP API (v2)** like this project does. The free tier gives you **1 million requests** per month.
@@ -119,24 +119,23 @@ Below is the breakdown of the **12 AWS Services** utilized in this project.
   - _AWS Lambda Web Adapter (LWA)_ (How to run native web servers like Uvicorn inside Lambda)
   - _Chunked Transfer Encoding_
 - **️ Pro Tip & Cost Trap:**
-  - _The Trap:_ Since Function URLs bypass API Gateway, they also bypass Cognito's built-in token authorizer!
-  - _The Fix:_ You must perform manual security token verification inside your backend code (e.g., using `PyJWT` middleware in FastAPI) to prevent anyone from calling your LLM streaming route for free.
+  - _The Trap:_ Since Function URLs bypass API Gateway, they also bypass edge-level authorization schemes.
+  - _The Fix:_ We perform consistent, manual security token verification inside the backend code (e.g., using `PyJWT` in FastAPI) for both API Gateway and FURL streaming routes to validate Clerk JWTs.
 
 ---
 
-### 4. Amazon Cognito (User Pools & Client)
+### 4. Clerk Authentication
 
-> **Friendly Analogy:** Think of Cognito as your "outsourced security team". Instead of building your own secure database to store hashed user passwords, you let AWS handle it securely.
+> **Friendly Analogy:** Think of Clerk as your "outsourced user directory and identity team". Instead of building your own secure database to store hashed user passwords or managing AWS-specific Cognito configurations, you delegate auth to Clerk.
 
-- **Role in this Chatbot:** Manages sign-up, sign-in, and verification emails for your users. On login, Cognito issues a cryptographically signed **JSON Web Token (JWT)** that identifies the user.
-- **Why it's cool:** Bypasses complex user directory management and automatically secures endpoints against hacking attempts (brute force protection, credential stuffing) for free.
+- **Role in this Chatbot:** Manages sign-up, sign-in, session state, and user management. On login, Clerk issues a cryptographically signed **JSON Web Token (JWT)** that identifies the user.
+- **Why it's cool:** Clerk provides beautiful pre-built UI components, works out-of-the-box with React/Vite, supports social logins, and has a generous free tier of Monthly Active Users (MAUs).
 - **Key Concepts to Study & Google:**
-  - _JSON Web Tokens (JWTs): ID Tokens vs. Access Tokens vs. Refresh Tokens_
-  - _JWKS (JSON Web Key Sets)_ and offline cryptographic signature validation
-  - _User Pools (identity directory) vs. Identity Pools (AWS credentials)_
+  - _JSON Web Tokens (JWTs)_: Sub, Issuer (iss), and Authorized Party (azp) claims
+  - _JWKS (JSON Web Key Sets)_ and offline signature verification
 - **️ Pro Tip & Cost Trap:**
-  - _The Trap:_ Cognito recently split into _Lite_, _Essentials_, and _Plus_ tiers. Toggling on the **Plus** tier (advanced threat protection) drops your 10,000 Monthly Active Users (MAU) free tier to zero, and you are charged immediately. SMS verification messages are also never free.
-  - _The Fix:_ Keep your Cognito User Pool plan set to **Lite** or **Essentials** and stick to standard Email verification.
+  - _The Trap:_ Exceeding Clerk's free tier limits or using advanced enterprise features can start incurring costs.
+  - _The Fix:_ Use Clerk's standard features and stick to the free tier limit, which is more than enough for personal or development projects.
 
 ---
 
@@ -284,7 +283,7 @@ Inside your project root, there is a file called [template.yaml](../template.yam
 1. _"Deploy a Lambda function using the `./backend` code."_
 2. _"Deploy a DynamoDB table named `chatbot-table` with a Partition Key and Sort Key."_
 3. _"Give the Lambda function precise CRUD (Create, Read, Update, Delete) permissions to the DynamoDB table."_
-4. _"Create a Cognito User Pool for email login."_
+4. _"Inject Clerk environment parameters into the functions for token verification."_
 
 When you run `sam deploy`, AWS reads this YAML file and builds the entire ecosystem automatically in under 5 minutes. If you want to delete the entire app and all its costs, you simply run `sam delete`, and AWS tears it all down cleanly.
 
@@ -304,14 +303,14 @@ If you want to become comfortable managing and developing this app, here is the 
 - Open the **Amazon DynamoDB Console** and explore your deployed table.
 - Observe how conversation history is saved. Look at the composite keys (`pk` and `sk`) and see how the context (`CTX`) cache item expires automatically when you don't message the bot for an hour.
 
-### Step 3: Explore Security (IAM & Cognito)
+### Step 3: Explore Security (IAM & Clerk)
 
 - Look up **IAM Policies**. Understand how your Lambda's execution role restricts access so that your Lambda can _only_ write to your specific S3 bucket and DynamoDB table.
-- Create a dummy test user in Cognito using the AWS CLI commands listed in the Cognito Auth Guide.
+- Create and manage users within your Clerk dashboard, and configure the local environment keys.
 
 ### Step 4: Trace the Code
 
-- Examine [backend/app/dependencies.py](../backend/app/dependencies.py). Study how it parses the user identity claims sent by API Gateway, or falls back to a dummy user ID for local, offline development.
+- Examine [backend/app/dependencies.py](../backend/app/dependencies.py). Study how it parses the user identity claims from Clerk JWT tokens, or falls back to a dummy user ID for local, offline development.
 - Examine [backend/app/services/vector_store.py](../backend/app/services/vector_store.py) to see how Boto3 initializes and queries the S3 Vectors index.
 
 _Congratulations on starting your serverless journey! You are working with a state-of-the-art serverless architecture that is highly performant, secure, and optimized._
@@ -327,19 +326,19 @@ This section documents key architectural Q&As exploring how this serverless stac
 **A:** No, because **public network accessibility is not the same as unauthorized access.**
 All web APIs (including API Gateway and serverful VMs) must expose a public-facing HTTPS endpoint so browsers can reach them. What matters is **authentication and authorization**:
 
-1. **JWT Verification:** Even though the Function URL security is set to `AuthType: NONE` (meaning AWS does not block callers at the network edge), the FastAPI app running inside Lambda intercepts every request. It requires a valid, cryptographically signed Cognito JWT in the `Authorization` header. If it's missing or invalid, the backend immediately rejects the call with a `401 Unauthorized` before executing any LLM or DB code.
+1. **JWT Verification:** Even though the Function URL security is set to `AuthType: NONE` (meaning AWS does not block callers at the network edge), the FastAPI app running inside Lambda intercepts every request. It requires a valid, cryptographically signed Clerk JWT in the `Authorization` header. If it's missing or invalid, the backend immediately rejects the call with a `401 Unauthorized` before executing any LLM or DB code.
 2. **Encrypted in Transit:** FURLs automatically enforce industry-standard TLS (HTTPS) to protect data in transit.
 3. **DDoS Protection:** AWS shields FURLs automatically with basic AWS Shield infrastructure-layer DDoS protection.
 
 ---
 
-### Q2: How does Cognito auth/registration differ from a standard serverful FastAPI + DB OAuth setup?
+### Q2: How does Clerk auth/registration differ from a standard serverful FastAPI + DB OAuth setup?
 
 **A:** The paradigm shift is centered on **delegation**:
 
-- **Database & Hashing:** In a serverful app, you manage a `users` table, hash passwords yourself (using bcrypt/argon2), and handle security compliance. With Cognito, AWS manages the entire secure directory. You don't store passwords or hash anything.
-- **Bypassing the Backend:** During registration and login, the React client communicates **directly with Cognito’s public API**. Your FastAPI backend is completely bypassed! You pay $0 in Lambda compute fees for sign-up and login traffic.
-- **Asymmetric Tokens:** Instead of signing JWTs with a shared symmetric `SECRET_KEY` in your `.env` file, Cognito signs JWTs using asymmetric cryptography. The backend validates signatures offline by fetching Cognito’s public keys from a public URL called the **JWKS** (JSON Web Key Set).
+- **Database & Hashing:** In a serverful app, you manage a `users` table, hash passwords yourself (using bcrypt/argon2), and handle security compliance. With Clerk, an external identity provider manages the entire secure directory. You don't store passwords or hash anything.
+- **Bypassing the Backend:** During registration and login, the React client communicates **directly with Clerk's API**. Your FastAPI backend is completely bypassed for auth actions!
+- **Asymmetric Tokens:** Instead of signing JWTs with a shared symmetric `SECRET_KEY` in your `.env` file, Clerk signs JWTs using asymmetric cryptography. The backend validates signatures offline by fetching Clerk’s public keys from a public URL called the **JWKS** (JSON Web Key Set).
 
 ---
 
@@ -350,7 +349,7 @@ All web APIs (including API Gateway and serverful VMs) must expose a public-faci
 #### Amazon API Gateway HTTP API (v2)
 
 1. **Envoy Proxy Fleet:** It is an AWS-managed reverse proxy.
-2. **Edge Auth:** It validates the Cognito JWT at the network edge _before_ invoking your Lambda.
+2. **Delegated In-App Auth:** API Gateway in this project is configured to bypass edge-level authorizers. It forwards the requests directly to Lambda, which uses custom FastAPI dependency middleware to validate Clerk JWTs.
 3. **Proxy Event Mapping:** It translates the raw HTTP request into a heavy structured JSON event (Proxy Integration v2.0) and invokes Lambda. Mangum (the ASGI adapter inside Lambda) translates this JSON into ASGI format for FastAPI.
 4. **⚠️ Response Buffering:** API Gateway strictly **buffers the entire response**. It waits for the Lambda to finish completely, caps response size at 6MB, and times out after 29 seconds.
 

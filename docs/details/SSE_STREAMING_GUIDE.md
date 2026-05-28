@@ -16,7 +16,7 @@ In our current synchronous setup, the frontend sends a prompt, and the backend w
 | **Time-to-First-Byte (TTFB)** | High (5–12 seconds, dependent on LLM length) | Ultra-Low (200–500ms, instant token display) |
 | **Gateway Integration**       | API Gateway HTTP API v2                      | Lambda Function URL (FURL)                   |
 | **Lambda Adapter**            | Mangum (ASGI-to-Lambda)                      | AWS Lambda Web Adapter (LWA)                 |
-| **Authentication**            | API Gateway Cognito Authorizer               | In-App FastAPI JWT Dependency                |
+| **Authentication**            | In-App Clerk JWT Validation                  | In-App Clerk JWT Validation                  |
 | **Cost**                      | API Gateway Request + Lambda Duration        | Lambda Duration Only (FURL is free)          |
 
 ### Real-Time Flow Comparison
@@ -24,7 +24,7 @@ In our current synchronous setup, the frontend sends a prompt, and the backend w
 #### Current Setup (Synchronous Buffer)
 
 ```txt
-[React Frontend] --- (POST /chat) ---> [API Gateway HTTP API] ---> [FastAPI + Mangum]
+[React Frontend] --- (POST /chat) ---> [API Gateway HTTP API] ---> [FastAPI]
                                                                         |
                                                                   (Await completion)
                                                                         |
@@ -35,7 +35,7 @@ In our current synchronous setup, the frontend sends a prompt, and the backend w
 
 ```mermaid
 graph TD
-    React[React Frontend] -->|1. POST /chat + Cognito JWT| FURL[Lambda Function URL]
+    React[React Frontend] -->|1. POST /chat + Clerk JWT| FURL[Lambda Function URL]
     FURL -->|2. Event Streams| LWA[AWS Lambda Web Adapter Layer]
     LWA -->|3. ASGI Request| FastAPI[FastAPI App]
     FastAPI -->|4. Async Generator| LWA
@@ -111,7 +111,7 @@ async def chat_stream(
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     llm=Depends(get_llm_client),
-    user_id: str = Depends(get_current_user_id), # Custom Cognito JWT validator
+    user_id: str = Depends(get_current_user_id), # Custom Clerk JWT validator
 ) -> StreamingResponse:
     conversation_id = payload.conversation_id or str(uuid4())
     user_message_id = str(uuid4())
@@ -279,69 +279,49 @@ export async function sendChatMessageStream(
 
 ### The Shift from API Gateway Authorizers to FastAPI Middleware
 
-By utilizing Lambda Function URLs, we lose the native Cognito integration built into API Gateway (`ChatbotHttpApi`). Authentication is instead moved directly into the Python application layer.
+By utilizing Lambda Function URLs and matching unified API Gateway behaviors, authentication is moved directly into the Python application layer. This ensures consistent authentication across all routes.
 
 #### FastAPI JWT Authentication Dependency
 
-In `backend/app/dependencies.py`, we implement a validator that handles the Cognito JWKS key rotation, signature verification, and expiration validation:
+In `backend/app/dependencies.py`, we implement a validator that handles Clerk JWKS key rotation, signature verification, and expiration validation:
 
 ```python
-import jwt # PyJWT
-import requests
-from fastapi import Header, HTTPException, status, Depends
-from functools import lru_cache
+def _verify_clerk_token(token: str, settings: Settings) -> dict[str, Any]:
+    import jwt
+    from jwt.algorithms import RSAAlgorithm
 
-COGNITO_JWKS_URL = "https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
-
-@lru_cache()
-def get_jwks(url: str):
-    return requests.get(url).json()
-
-async def get_current_user_id(
-    authorization: str = Header(..., description="Cognito Bearer Token"),
-    settings=Depends(get_settings)
-) -> str:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token scheme")
-
-    token = authorization.split(" ")[1]
-    jwks_url = COGNITO_JWKS_URL.format(
-        region=settings.aws_region,
-        user_pool_id=settings.cognito_user_pool_id
-    )
-
-    try:
-        # 1. Fetch Cognito Public Keys
-        jwks = get_jwks(jwks_url)
-        unverified_header = jwt.get_unverified_header(token)
-        kid = unverified_header["kid"]
-
-        # 2. Match Key ID
-        public_key = None
-        for key in jwks["keys"]:
-            if key["kid"] == kid:
-                public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
-                break
-
-        if not public_key:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token key identifier not found")
-
-        # 3. Decode & Verify JWT
-        payload = jwt.decode(
-            token,
-            public_key,
-            algorithms=["RS256"],
-            audience=settings.cognito_client_id,
-            options={"verify_exp": True}
+    jwks_url = settings.clerk_jwks_uri
+    if not jwks_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Clerk JWKS URL is not configured",
         )
 
-        # 4. Return unique sub / user_id
-        return payload["sub"]
+    # 1. Inspect issuer claim
+    unverified_payload = jwt.decode(token, options={"verify_signature": False})
+    token_issuer = unverified_payload.get("iss")
+    
+    # 2. Fetch JWKS and match Key ID (kid)
+    jwks = get_jwks(jwks_url)
+    unverified_header = jwt.get_unverified_header(token)
+    kid = unverified_header.get("kid")
 
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid credentials: {str(e)}")
+    public_key = None
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            public_key = RSAAlgorithm.from_jwk(key)
+            break
+
+    # 3. Cryptographically verify signature and expiration
+    payload = jwt.decode(
+        token,
+        public_key,
+        algorithms=["RS256"],
+        issuer=token_issuer,
+        options={"verify_exp": True, "verify_aud": False},
+        leeway=60,
+    )
+    return payload
 ```
 
 ---

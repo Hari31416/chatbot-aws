@@ -12,9 +12,9 @@ Browser (User)
   ├── GET index.html / CSS / JS  ──► Amazon S3 Static Website Hosting
   │                                    (Bucket: chat-hari31416)
   │
-  ├── GET/POST REST APIs ─────────► AWS API Gateway (Secured by Cognito)
+  ├── GET/POST REST APIs ─────────► AWS API Gateway ──► Lambda (FastAPI / Clerk Auth)
   │
-  └── POST /chat/stream (SSE) ────► AWS Lambda Function URL (In-App PyJWT)
+  └── POST /chat/stream (SSE) ────► AWS Lambda Function URL (In-App Clerk Auth)
 ```
 
 The frontend runs entirely client-side in the user's browser. It is compiled into static HTML, CSS, and JS chunks and hosted directly in an Amazon S3 bucket configured for website hosting.
@@ -37,8 +37,7 @@ Vite environments inject variables during build-time (bundling). We configure th
 - **`PORT`**: Dev server port (default `3000`).
 - **`ALLOWED_HOSTS`**: Authorized hostnames for Vite local server.
 - **`VITE_API_BASE_URL`**: Deployed AWS API Gateway base URL.
-- **`VITE_COGNITO_USER_POOL_ID`**: Active AWS Cognito User Pool.
-- **`VITE_COGNITO_CLIENT_ID`**: Active AWS Cognito Client App ID (without secrets).
+- **`VITE_CLERK_PUBLISHABLE_KEY`**: Active Clerk Publishable Key (from your Clerk dashboard).
 - **`VITE_AWS_REGION`**: AWS deployment region (e.g., `ap-south-1`).
 
 ---
@@ -51,7 +50,7 @@ We have automated the deployment pipeline using modular shell scripts and a root
 
 1.  **[deploy-frontend.sh](file:///Users/hari/Desktop/sandbox/chatbot-aws/deploy-frontend.sh)**:
     - Queries CloudFormation stack outputs using the AWS CLI for the active stack (accepts an optional first command-line argument like `chat-staging` to specify the target environment, defaulting to `chat`).
-    - Retrieves the active `ApiUrl`, `FrontendBucket`, `UserPoolId`, and `UserPoolClientId`.
+    - Retrieves the active stack outputs: `ApiUrl`, `FunctionUrl`, `FrontendBucket`, and `FrontendUrl`.
     - Falls back to your custom S3 bucket name `chat-hari31416` if stack outputs are not yet populated.
     - Compiles Vite, injecting these variables dynamically at build-time.
     - Syncs the `/dist` directory to the target S3 bucket using `aws s3 sync` and deletes stale files.
@@ -100,8 +99,7 @@ cd frontend
 
 # 2. Build the production build by setting env variables
 VITE_API_BASE_URL="https://<api-gateway-id>.execute-api.ap-south-1.amazonaws.com" \
-VITE_COGNITO_USER_POOL_ID="ap-south-1_xxxxxxxxx" \
-VITE_COGNITO_CLIENT_ID="xxxxxxxxxxxxxxxxxxxxxxxxxx" \
+VITE_CLERK_PUBLISHABLE_KEY="pk_test_xxxxxxxxxxxxxxxxxxxxxxxx" \
 VITE_AWS_REGION="ap-south-1" \
 pnpm build
 

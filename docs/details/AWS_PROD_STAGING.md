@@ -14,7 +14,7 @@ Each environment should run isolated serverless resource sets:
 | **Database Table**     | `chatbot-table-staging`              | `chatbot-table-prod`              |
 | **S3 Uploads Bucket**  | `chatbot-uploads-<account>-staging`  | `chatbot-uploads-<account>-prod`  |
 | **S3 Frontend Bucket** | `chatbot-frontend-<account>-staging` | `chatbot-frontend-<account>-prod` |
-| **Cognito User Pool**  | `chatbot-users-staging`              | `chatbot-users-prod`              |
+| **Clerk Auth Keys**    | Staging Clerk Instance               | Production Clerk Instance          |
 | **Invocation Route**   | Lambda Function URL (Streaming)      | Lambda Function URL (Streaming)   |
 
 ---

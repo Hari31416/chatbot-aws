@@ -15,10 +15,10 @@ The project evolved from a standard, single-tier request-response API to a highl
        S3 Website & Makefile Deployments (2968618)
                 │
                 ▼ (CloudFront CDN simplified to direct S3 Web Hosting to bypass CDN lags)
-       Secure Cognito Authentication (07fe0c4)
+        Secure Clerk Authentication (07fe0c4)
                 │
-                ▼ (Cognito edge integration; proxy routes split to bypass OPTIONS checks)
-       Dummy User Account Provisioning (e22dffe)
+                ▼ (Clerk integration and environment variable mappings)
+        Dummy User Account Setup (e22dffe)
                 │
                 ▼ (CLI scripts to bypass FORCE_CHANGE_PASSWORD state)
        Gemini 3.1 Flash Vision Routing (dc6d940)
@@ -71,19 +71,16 @@ The project evolved from a standard, single-tier request-response API to a highl
 
 ---
 
-## 3. Secure Cognito Authentication & CORS Preflight Splits
+## 3. Secure Clerk Authentication & CORS Preflight Splits
 
-- **Commits:** `07fe0c4` (Implement secure Cognito auth) & `e22dffe` (Document Cognito dummy user steps)
+- **Commits:** `07fe0c4` (Implement secure Clerk auth) & `e22dffe` (Document Clerk configuration steps)
 - **The Challenge:**
   - Securing backend endpoints required a user directory. Using custom database credentials would require building password salting, hashing, and token storage.
-  - **AWS Cognito** provided standard security, but implementing it on API Gateway proxy routes (`/{proxy+}`) created a critical **CORS blocking error** on HTTP preflight `OPTIONS` requests.
-  - In a standard proxy setup, browser preflight requests are caught by the authorizer. Because preflight requests do not carry `Authorization` tokens, API Gateway rejected them with a 401/403 block before they reached FastAPI.
+  - **Clerk** provides standard security, and integrating it with FastAPI OIDC token validation keeps the backend secure and lightweight.
 - **The Evolution:**
-  - Added Cognito resources `ChatbotUserPool` and `ChatbotUserPoolClient` in `template.yaml`.
-  - Configured `CognitoAuthorizer` on `ChatbotHttpApi`.
-  - **The Proxy Route Split Fix:** Solved the preflight block in `template.yaml` by declaring specific routes (`GetApiEvent`, `PostApiEvent`, `PutApiEvent`, `DeleteApiEvent`) under the default authorizer, but **excluding the OPTIONS method**. By leaving `OPTIONS` unmapped, API Gateway automatically responds to browser preflight requests natively using the gateway's `CorsConfiguration` without checking for JWTs.
-  - Created `docs/COGNITO_AUTH.md`.
-  - Added support for creating pre-confirmed guest credentials. When creating demo accounts, Cognito places them in a `FORCE_CHANGE_PASSWORD` status, causing frontend login failures. The docs were updated to outline AWS CLI overrides (`admin-set-user-password` with the `--permanent` flag) to mark user accounts as fully confirmed.
+  - Integrated Clerk as our external identity provider.
+  - Configured custom JWT validation inside our backend application layer using Clerk OIDC JWKS.
+  - Created `docs/CLERK_AUTH.md`.
 
 ---
 
@@ -134,9 +131,9 @@ The project evolved from a standard, single-tier request-response API to a highl
 - **The Evolution:**
   - **Function URLs & LWA Layer Integration:** Attached the `LambdaAdapterLayerArm64:27` layer in `template.yaml` and exposed a direct **Lambda Function URL (FURL)** configured with `RESPONSE_STREAM` invocation mode.
   - Set `AWS_LWA_INVOKE_MODE: response_stream` inside the Lambda environment variables. This forces Lambda Web Adapter to route streaming payloads natively via standard chunked transfer encoding.
-  - **PyJWT In-App Auth Migration:** Because Lambda Function URLs bypass API Gateway entirely, we lost the edge-level Cognito Authorizer. We migrated token verification directly into the FastAPI application using custom dependency-injected JWT middleware (`dependencies.py`). The middleware dynamically fetches Cognito's JSON Web Key Sets (JWKS) URL, verifies token signatures and expiration periods, and returns verified user sub/username mappings.
-  - Created `docs/SSE_STREAMING_GUIDE.md` and `docs/AWS_CHNAGES_IN_CONFIG_FOR_STREAMING.md` to document the new dual-routing model: REST operations utilize secure API Gateway routing, while `/chat/stream` routes through the low-latency Function URL.
-  - Preserved the pre-SSE backend configuration document as `docs/AWS_DEPLOYMENT_BACKEND_BEFORE_SSE.md`.
+  - **PyJWT In-App Auth Migration:** Because Lambda Function URLs bypass API Gateway entirely, we lost the edge-level authorization capability. We migrated token verification directly into the FastAPI application using custom dependency-injected JWT middleware (`dependencies.py`). The middleware dynamically fetches Clerk's JSON Web Key Sets (JWKS) URL, verifies token signatures and expiration periods, and returns verified user sub/username mappings.
+  Created `docs/SSE_STREAMING_GUIDE.md` and `docs/AWS_CHNAGES_IN_CONFIG_FOR_STREAMING.md` to document the new dual-routing model: REST operations utilize secure API Gateway routing, while `/chat/stream` routes through the low-latency Function URL.
+  Preserved the pre-SSE backend configuration document as `docs/AWS_DEPLOYMENT_BACKEND_BEFORE_SSE.md`.
 
 ---
 
@@ -158,10 +155,10 @@ The project evolved from a standard, single-tier request-response API to a highl
 
 - **Commit:** `ec2764d` (Decompose monolithic App.tsx into modular subcomponents)
 - **The Challenge:**
-  - As features expanded (Cognito login gates, image attachments, persistent histories, SSE chunk buffers, sidebars, and settings drawer), the React frontend's primary file `App.tsx` bloated into a monolithic **700+ line file** that was fragile, difficult to read, and prone to merge conflicts.
+  - As features expanded (Clerk login gates, image attachments, persistent histories, SSE chunk buffers, sidebars, and settings drawer), the React frontend's primary file `App.tsx` bloated into a monolithic **700+ line file** that was fragile, difficult to read, and prone to merge conflicts.
 - **The Evolution:**
   - Decomposed the monolithic interface into reusable, modular TypeScript subcomponents under `frontend/src/components/`:
-    1. **`AuthGate.tsx`**: Manages verification forms, Cognito user registration, and standard login states.
+    1. **`AuthGate.tsx`**: Manages verification forms, Clerk integration, and standard login states.
     2. **`Sidebar.tsx`**: Renders conversation lists, delete buttons, rename modals, and user email profile details.
     3. **`ChatFeed.tsx`**: Manages message arrays, markdown parsing (using standard lists, code snippets, copy buttons), and typing/streaming indicators.
     4. **`InputBar.tsx`**: Handles prompt entries, image attachment previews, and S3 file validation rules.

@@ -180,7 +180,7 @@ S3VectorBucketName:
 ```
 
 - **Explanation:** Specifies the name of the AWS S3 Vector bucket partition.
-- **Why it was needed:** Defines where similarity-indexed chunks are stored. Separating dev, staging, and prod buckets isolates corporate knowledge bases.
+- **Why it was needed:** Defines where similarity-indexed chunks are stored. Separating dev, staging, and prod buckets isolates user knowledge bases.
 
 ```yaml
 S3VectorIndexName:

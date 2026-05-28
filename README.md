@@ -1,6 +1,6 @@
-# Serverless Corporate Chatbot and RAG Platform on AWS
+# Serverless Chatbot with RAG on AWS
 
-A production-grade, secure, and fully serverless corporate AI Chatbot and RAG (Retrieval-Augmented Generation) platform. The application is built using a decoupled Python FastAPI backend and a TypeScript React SPA frontend. Deployed in a single step using the AWS Serverless Application Model (SAM), the platform achieves serverless real-time streaming, enterprise authentication, and robust asynchronous document ingestion.
+A production-grade, secure, and fully serverless AI Chatbot with RAG (Retrieval-Augmented Generation) system. The application is built using a decoupled Python FastAPI backend and a TypeScript React SPA frontend. Deployed in a single step using the AWS Serverless Application Model (SAM), the platform achieves serverless real-time streaming, enterprise authentication, and robust asynchronous document ingestion.
 
 The architecture features Server-Sent Events (SSE) streaming through AWS Lambda Web Adapter, Cognito-based JWT authentication, private multimodal attachment storage in S3, and a decoupled event-driven RAG ingestion pipeline using Amazon SQS, AWS Textract, and native Amazon S3 Vectors for embedding storage and similarity search.
 

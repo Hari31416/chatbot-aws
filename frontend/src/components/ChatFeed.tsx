@@ -296,7 +296,7 @@ export function ChatFeed({
       {activeMessages.length === 0 ? (
         <div className="h-full flex flex-col items-center justify-center max-w-lg mx-auto text-center space-y-4 py-20">
           <h1 className="text-xl font-semibold text-zinc-850 dark:text-white">
-            Serverless Chatbot Platform
+            Serverless Chatbot with RAG
           </h1>
           <p className="text-sm text-zinc-450 max-w-sm">
             Securely authenticated via Clerk. Deployed on AWS Lambda.

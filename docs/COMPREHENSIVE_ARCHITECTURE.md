@@ -1,6 +1,6 @@
 # Master Serverless & RAG Platform Architecture Blueprint on AWS
 
-This document serves as the comprehensive architectural blueprint and implementation manual for the **Serverless Corporate Chatbot and RAG (Retrieval-Augmented Generation) Platform**. It synthesizes high-level service guides, low-level CloudFormation infrastructure declarations (`template.yaml`), and local testing strategies into a single, cohesive developer guide.
+This document serves as the comprehensive architectural blueprint and implementation manual for the **Serverless Chatbot with RAG (Retrieval-Augmented Generation) System**. It synthesizes high-level service guides, low-level CloudFormation infrastructure declarations (`template.yaml`), and local testing strategies into a single, cohesive developer guide.
 
 ---
 

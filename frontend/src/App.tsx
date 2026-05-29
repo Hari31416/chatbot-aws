@@ -114,6 +114,11 @@ export function App() {
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
   // --- API Health Status ---
+  // Deduplicate: if both URLs are identical, reuse the same query result to
+  // avoid two concurrent /health calls against the same endpoint.
+  const isSameUrl =
+    apiBaseUrl.replace(/\/$/, '') === functionUrl.replace(/\/$/, '')
+
   const {
     data: isBackendOnline,
     refetch: recheckBackendHealth,
@@ -132,8 +137,11 @@ export function App() {
     status: functionHealthStatus,
   } = useQuery({
     queryKey: ["functionHealth", functionUrl],
-    queryFn: () => checkHealth(functionUrl),
+    // When both URLs resolve to the same host, skip a redundant fetch and
+    // reuse the backend health result instead.
+    queryFn: () => (isSameUrl ? Promise.resolve(isBackendOnline ?? false) : checkHealth(functionUrl)),
     refetchInterval: 30000,
+    enabled: !isSameUrl || backendHealthStatus !== 'pending',
   });
 
   // --- Initial data: fetch health + conversations + ragDocuments in one GraphQL call ---
@@ -204,18 +212,24 @@ export function App() {
     }
   }, [apiBaseUrl, isLoggedIn, userId])
 
-  // Fetch messages for active conversation from backend when activeConversationId changes
+  // Keep a ref to isStreaming so the messages effect can read the latest value
+  // without adding it to the dependency array (which would cause spurious re-fetches).
+  const isStreamingRef = React.useRef(isStreaming);
+  React.useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+
+  // Fetch messages for active conversation from backend when activeConversationId changes.
   React.useEffect(() => {
     if (!activeConversationId || !apiBaseUrl || !isLoggedIn) return;
 
     const convId = activeConversationId;
-    const currentMessages = messages[convId] || [];
-    if (currentMessages.length === 0) {
-      const conv = conversations.find((c) => c.id === convId);
-      if (conv && conv.isLocal) {
-        return;
-      }
-    }
+
+    // Skip fetch for newly-created local conversations (no backend record yet).
+    const conv = conversations.find((c) => c.id === convId);
+    if (conv?.isLocal) return;
+
+    // Skip fetch while streaming is in-flight to avoid overwriting
+    // optimistic messages with stale data before the backend has persisted them.
+    if (isStreamingRef.current) return;
 
     let active = true;
     async function loadMessages() {
@@ -241,6 +255,7 @@ export function App() {
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId, apiBaseUrl, isLoggedIn]);
 
   // Automatic logout on unauthorized API errors (session expired)
@@ -370,6 +385,11 @@ export function App() {
       });
     },
   });
+
+  // Keep a ref to sendMutation.isPending so effects can read the latest value
+  // without adding it to their dependency arrays.
+  const isMutatingRef = React.useRef(sendMutation.isPending);
+  React.useEffect(() => { isMutatingRef.current = sendMutation.isPending; }, [sendMutation.isPending]);
 
   // --- Chat Handlers ---
   const handleCreateConversation = () => {

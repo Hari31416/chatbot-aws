@@ -518,16 +518,13 @@ ChatbotTable:
   Type: AWS::DynamoDB::Table
   Properties:
     TableName: !Sub chatbot-table-${Environment}
-    BillingMode: PROVISIONED
-    ProvisionedThroughput:
-      ReadCapacityUnits: 5
-      WriteCapacityUnits: 5
+    BillingMode: PAY_PER_REQUEST
 ```
 
 - **Explanation:** Deploys a single-table DynamoDB instance.
-- **`BillingMode: PROVISIONED`**: Explicitly selects Provisioned capacity, setting RCU and WCU values to 5.
-- **Why it was chosen:** AWS offers 25 RCU and 25 WCU entirely **Always Free** for provisioned tables. Choosing "PAY_PER_REQUEST" (On-Demand) forfeits this free tier, incurring charges from request number one.
-- **Alternatives:** On-Demand capacity (highly cost-inefficient for small workloads).
+- **`BillingMode: PAY_PER_REQUEST`**: Configures the DynamoDB table to use On-Demand capacity.
+- **Why it was chosen:** Switching from Provisioned to Pay-Per-Request (On-Demand) eliminates all hourly capacity charges (which previously accrued 24/7 at 10 RCU/WCU per stack). Under low-traffic development or sandbox conditions (especially with multiple environments like prod + staging), On-Demand guarantees $0.00 idle costs and avoids exhausting the 18,600 RCU-Hours free tier limit.
+- **Alternatives:** Provisioned capacity (useful for high, predictable traffic but wasteful for idle or multi-environment sandbox stacks).
 
 ```yaml
 AttributeDefinitions:
@@ -563,9 +560,6 @@ GlobalSecondaryIndexes:
         - name
         - created_at
         - updated_at
-    ProvisionedThroughput:
-      ReadCapacityUnits: 5
-      WriteCapacityUnits: 5
 ```
 
 - **Explanation:** Defines a secondary queryable index.
@@ -724,6 +718,7 @@ IngestionQueue:
   Properties:
     QueueName: !Sub chatbot-ingestion-queue-${Environment}
     VisibilityTimeout: 180 # Must be >= Ingestion Worker Timeout (120s)
+    ReceiveMessageWaitTimeSeconds: 20 # Enables 20-second long polling
     RedrivePolicy:
       deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
       maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
@@ -735,6 +730,7 @@ IngestionQueue:
   - **`MessageRetentionPeriod: 1209600`** (14 days): Retains failed messages for two weeks (the maximum SQS allows), giving developers ample time to inspect, troubleshoot, and re-drive raw message payloads that failed processing.
 - **`IngestionQueue`**: The primary job buffer.
   - **`VisibilityTimeout: 180`**: Crucial setting configured to **180 seconds**. When a worker Lambda polls a message, SQS hides the message from other workers. This timeout must exceed the processing Lambda's execution timeout (120s) with a margin of safety, ensuring a worker has enough time to complete the Textract parsing and RAG embedding before SQS assumes it failed and exposes the message to another worker.
+  - **`ReceiveMessageWaitTimeSeconds: 20`**: Enables 20-second **SQS Long Polling**. Rather than replying immediately when the queue is empty (short polling), SQS holds the polling connection open for up to 20 seconds. This reduces idle SQS API requests (and costs) by up to 90%, keeping the project comfortably within SQS free tier limits.
   - **`RedrivePolicy`**: Re-routes messages to `IngestionDLQ` if they fail processing `3` times (`maxReceiveCount: 3`).
 
 ```yaml
@@ -814,6 +810,8 @@ ChatbotIngestionWorkerFunction:
         Properties:
           Queue: !GetAtt IngestionQueue.Arn
           BatchSize: 1 # Process one file at a time
+          ScalingConfig:
+            MaximumConcurrency: 2 # Limit concurrent SQS pollers
 ```
 
 ### Explanation
@@ -827,6 +825,7 @@ ChatbotIngestionWorkerFunction:
   - **`s3vectors` and `textract` policies**: Grants scoped permissions to interact with the serverless S3 Vector database indexes (including vector insertions and deletions) and AWS Textract OCR services.
 - **`SQSTrigger`**: Maps the SQS event source.
   - **`BatchSize: 1`**: Instructs Lambda to invoke the function with exactly one message at a time. This isolates failures (a toxic file won't fail an entire batch of uploads) and bounds memory footprint.
+  - **`ScalingConfig > MaximumConcurrency: 2`**: Restricts the maximum number of concurrent Lambda functions polling the queue to 2. This bounds the polling rate on empty queues, drastically reducing the monthly background SQS request count, and also protects downstream AI models (Gemini/LiteLLM/Textract) from rate-limit exhaustion.
 
 ```yaml
 ChatbotIngestionWorkerFunctionLogGroup:

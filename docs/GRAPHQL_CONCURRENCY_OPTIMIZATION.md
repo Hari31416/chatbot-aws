@@ -6,9 +6,9 @@ This document outlines the architectural proposal to migrate the Chatbot applica
 
 ## 1. Executive Summary
 
-In traditional containerized environments (ECS, EC2, Kubernetes), servers handle hundreds of concurrent requests on a single instance using multithreading. 
+In traditional containerized environments (ECS, EC2, Kubernetes), servers handle hundreds of concurrent requests on a single instance using multithreading.
 
-In AWS Lambda, execution environments are strictly **single-concurrency**. Each active container handles only **one request at a time**. 
+In AWS Lambda, execution environments are strictly **single-concurrency**. Each active container handles only **one request at a time**.
 
 When our REST client boots, it dispatches 5+ API requests in parallel. Even if we pre-warm one container, the remaining concurrent requests force AWS Lambda to scale out and spin up multiple new containers. If the primary chat stream request lands on one of these cold containers, the user experiences a cold start delay. By consolidating startup operations into a single GraphQL query, we reduce app initialization concurrency to exactly **1 request**, ensuring the pre-warmed container is reused perfectly.
 
@@ -38,7 +38,7 @@ sequenceDiagram
     APIGW->>C3: Route /chat/stream (Cold Start + 11s handler execution!)
 ```
 
-* **Result:** Because requests 2, 3, and 4 arrive while Container A is busy, AWS Lambda immediately scales out. The user's chat request hits a brand-new container, suffering a cold start.
+- **Result:** Because requests 2, 3, and 4 arrive while Container A is busy, AWS Lambda immediately scales out. The user's chat request hits a brand-new container, suffering a cold start.
 
 ---
 
@@ -56,13 +56,13 @@ sequenceDiagram
     APIGW->>C1: Route to Warmed Container A
     Note over C1: Resolves health, conversations, and docs in parallel inside asyncio event loop
     C1-->>User: Returns aggregated JSON (instant response)
-    
+
     Note over User: User types message
     User->>APIGW: Request: POST /chat/stream
     APIGW->>C1: Reuses Warmed Container A (Instant stream)
 ```
 
-* **Result:** Since only a single consolidated request is sent during page initialization, it easily fits into the pre-warmed container. Subsequent user interactions reuse the same container, maintaining **0ms cold start latency**.
+- **Result:** Since only a single consolidated request is sent during page initialization, it easily fits into the pre-warmed container. Subsequent user interactions reuse the same container, maintaining **0ms cold start latency**.
 
 ---
 
@@ -151,10 +151,13 @@ interface InitialDataResponse {
     health: { status: string };
     conversations: Array<{ id: string; name: string }>;
     documents: Array<{ id: string; filename: string }>;
-  }
+  };
 }
 
-export async function fetchInitialData(apiBaseUrl: string, token: string): Promise<InitialDataResponse> {
+export async function fetchInitialData(
+  apiBaseUrl: string,
+  token: string,
+): Promise<InitialDataResponse> {
   const query = `
     query GetInitialData {
       health {
@@ -175,7 +178,7 @@ export async function fetchInitialData(apiBaseUrl: string, token: string): Promi
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ query }),
   });
@@ -188,13 +191,13 @@ export async function fetchInitialData(apiBaseUrl: string, token: string): Promi
 
 ## 5. Cost & Deployment Summary
 
-* **Infrastructure Changes:** **None**. The GraphQL endpoint is simply a new route on the same FastAPI application. 
-* **Deployment Commands:** Built and deployed using existing commands:
+- **Infrastructure Changes:** **None**. The GraphQL endpoint is simply a new route on the same FastAPI application.
+- **Deployment Commands:** Built and deployed using existing commands:
   ```bash
   make deploy-backend
   ```
-* **Warming Cost:** The EventBridge schedule pings `POST /graphql` with a lightweight `{ health { status } }` query once every 5 minutes. The monthly cost remains exactly **1.08 cents**.
-* **Billed Duration:** Internal execution resolves DB queries in parallel, maintaining a single-digit millisecond response time once warmed.
+- **Warming Cost:** The EventBridge schedule pings `POST /graphql` with a lightweight `{ health { status } }` query once every 5 minutes. The monthly cost remains exactly **1.08 cents**.
+- **Billed Duration:** Internal execution resolves DB queries in parallel, maintaining a single-digit millisecond response time once warmed.
 
 ---
 
@@ -214,4 +217,4 @@ if (health.status === "ok") {
 }
 ```
 
-* **Trade-off:** Sequential loading increases page-load time by the sum of individual database calls (~100ms - 200ms total), but completely resolves concurrent cold starts by reusing the same warmed Lambda container.
+- **Trade-off:** Sequential loading increases page-load time by the sum of individual database calls (~100ms - 200ms total), but completely resolves concurrent cold starts by reusing the same warmed Lambda container.

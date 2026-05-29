@@ -8,8 +8,6 @@ import urllib.request
 from functools import lru_cache
 from typing import Any, cast
 
-import boto3
-from botocore.config import Config
 from fastapi import Depends, HTTPException, Request, status
 
 from .repositories.conversation_repository import ConversationRepository
@@ -27,6 +25,7 @@ def get_settings() -> Settings:
 
 @lru_cache
 def get_dynamodb_table():
+    import boto3
     settings = get_settings()
     resource = boto3.resource(
         "dynamodb",
@@ -38,6 +37,8 @@ def get_dynamodb_table():
 
 @lru_cache
 def get_s3_client():
+    import boto3
+    from botocore.config import Config
     settings = get_settings()
     config = None
     if settings.s3_force_path_style:
@@ -64,6 +65,7 @@ def get_storage() -> StorageService:
 @lru_cache
 def get_ssm_parameter(param_name: str) -> str | None:
     try:
+        import boto3
         ssm = boto3.client("ssm", region_name=get_settings().aws_region)
         response = ssm.get_parameter(Name=param_name, WithDecryption=True)
         return response["Parameter"]["Value"]
@@ -143,6 +145,7 @@ def get_vector_store() -> VectorStoreClient:
 
 @lru_cache
 def get_textract_client():
+    import boto3
     settings = get_settings()
     return boto3.client(
         "textract",

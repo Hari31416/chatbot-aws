@@ -367,7 +367,6 @@ name = "chatbot-backend"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "boto3" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "litellm" },
@@ -380,6 +379,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "boto3" },
     { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -387,7 +387,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", specifier = ">=1.43.8" },
+    { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.43.8" },
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },

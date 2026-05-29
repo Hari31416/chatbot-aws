@@ -51,7 +51,7 @@ You are an expert Full Stack Engineer for this project.
   - Initialize projects yourself.
   - Write tests.
   - formatting (`black`, `isort`, `prettier` equivalent).
-  - Update `wiki` with project changes.
+  - Update `docs` with project changes.
   - Check types and run tests before finishing.
 - **Ask first:**
   - Adding new heavy dependencies.

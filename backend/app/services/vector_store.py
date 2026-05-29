@@ -5,12 +5,14 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
-import boto3
 from anyio import to_thread
-from botocore.exceptions import ClientError
-from litellm import embedding
 
 logger = logging.getLogger(__name__)
+
+
+def _get_client_error():
+    from botocore.exceptions import ClientError
+    return ClientError
 
 
 class VectorStoreClient:
@@ -24,6 +26,7 @@ class VectorStoreClient:
         gemini_api_key: str | None = None,
         endpoint_url: str | None = None,
     ) -> None:
+        import boto3
         self.vector_bucket = vector_bucket
         self.index_name = index_name
         self.embedding_model = embedding_model
@@ -42,6 +45,7 @@ class VectorStoreClient:
         )
 
     def initialize_storage(self) -> None:
+        ClientError = _get_client_error()
         try:
             self.client.create_vector_bucket(vectorBucketName=self.vector_bucket)
         except ClientError as exc:
@@ -71,6 +75,7 @@ class VectorStoreClient:
             return []
 
         def embed_texts() -> Any:
+            from litellm import embedding
             return embedding(
                 model=self.embedding_model,
                 input=cleaned,
@@ -204,7 +209,7 @@ class VectorStoreClient:
         return results
 
 
-def _is_already_exists_error(exc: ClientError) -> bool:
+def _is_already_exists_error(exc: Any) -> bool:
     code = exc.response.get("Error", {}).get("Code", "")
     return code in {
         "ConflictException",

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 
-from litellm import acompletion
-
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +16,7 @@ class LlmClient:
 
     async def generate(self, messages: list[dict]) -> str:
         logger.info("LLM request model=%s message_count=%d", self._model, len(messages))
+        from litellm import acompletion
         try:
             response = await acompletion(
                 model=self._model,
@@ -49,6 +48,7 @@ class LlmClient:
         logger.info(
             "LLM stream request model=%s message_count=%d", self._model, len(messages)
         )
+        from litellm import acompletion
         try:
             response = await acompletion(
                 model=self._model,

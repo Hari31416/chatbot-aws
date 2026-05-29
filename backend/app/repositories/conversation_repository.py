@@ -4,8 +4,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
+
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,16 @@ def _decimal_to_float(obj: Any) -> Any:
     if isinstance(obj, list):
         return [_decimal_to_float(v) for v in obj]
     return obj
+
+
+def _get_key_condition():
+    from boto3.dynamodb.conditions import Key
+    return Key
+
+
+def _get_client_error():
+    from botocore.exceptions import ClientError
+    return ClientError
 
 
 def pk_for_conversation(conversation_id: str) -> str:
@@ -81,7 +90,7 @@ class ConversationRepository:
                 ConditionExpression="attribute_not_exists(pk)",
             )
             logger.debug("Conversation created conversation_id=%s", conversation_id)
-        except ClientError as exc:
+        except _get_client_error() as exc:
             if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
                 logger.exception(
                     "DynamoDB error creating conversation conversation_id=%s",
@@ -133,6 +142,7 @@ class ConversationRepository:
         logger.debug(
             "get_recent_messages conversation_id=%s limit=%d", conversation_id, limit
         )
+        Key = _get_key_condition()
         response = self._table.query(
             KeyConditionExpression=Key("pk").eq(pk_for_conversation(conversation_id))
             & Key("sk").begins_with("MSG#"),
@@ -184,6 +194,7 @@ class ConversationRepository:
 
     def get_user_conversations(self, user_id: str) -> list[dict]:
         logger.debug("get_user_conversations user_id=%s", user_id)
+        Key = _get_key_condition()
         response = self._table.query(
             IndexName="UserConversationsIndexV2",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("sk").eq("META"),
@@ -216,6 +227,7 @@ class ConversationRepository:
 
     def get_all_messages(self, conversation_id: str) -> list[dict]:
         logger.debug("get_all_messages conversation_id=%s", conversation_id)
+        Key = _get_key_condition()
         response = self._table.query(
             KeyConditionExpression=Key("pk").eq(pk_for_conversation(conversation_id))
             & Key("sk").begins_with("MSG#"),
@@ -225,6 +237,7 @@ class ConversationRepository:
 
     def delete_conversation(self, conversation_id: str) -> None:
         logger.debug("delete_conversation conversation_id=%s", conversation_id)
+        Key = _get_key_condition()
         pk = pk_for_conversation(conversation_id)
         response = self._table.query(KeyConditionExpression=Key("pk").eq(pk))
         items = response.get("Items", [])
@@ -272,6 +285,7 @@ class ConversationRepository:
 
     def get_rag_document(self, user_id: str, document_id: str) -> dict | None:
         logger.debug("get_rag_document user_id=%s document_id=%s", user_id, document_id)
+        Key = _get_key_condition()
         response = self._table.query(
             KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
             & Key("sk").begins_with("RAGDOC#")
@@ -298,6 +312,7 @@ class ConversationRepository:
             chunks_ingested,
         )
         # Find the document first by querying all rag documents of this user
+        Key = _get_key_condition()
         response = self._table.query(
             KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
             & Key("sk").begins_with("RAGDOC#")
@@ -326,6 +341,7 @@ class ConversationRepository:
 
     def list_rag_documents(self, user_id: str) -> list[dict]:
         logger.debug("list_rag_documents user_id=%s", user_id)
+        Key = _get_key_condition()
         response = self._table.query(
             KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
             & Key("sk").begins_with("RAGDOC#"),
@@ -337,6 +353,7 @@ class ConversationRepository:
         logger.debug(
             "delete_rag_document user_id=%s document_id=%s", user_id, document_id
         )
+        Key = _get_key_condition()
         response = self._table.query(
             KeyConditionExpression=Key("pk").eq(pk_for_user(user_id))
             & Key("sk").begins_with("RAGDOC#")

@@ -60,7 +60,7 @@ Parameters:
 Globals:
   Function:
     Timeout: 30
-    MemorySize: 512
+    MemorySize: 1536
     Runtime: python3.12
     Architectures:
       - arm64
@@ -381,7 +381,7 @@ Resources:
       CodeUri: ./backend
       Handler: app.worker.handler
       Timeout: 120
-      MemorySize: 512
+      MemorySize: 1536
       Policies:
         - SQSPollerPolicy:
             QueueName: !GetAtt IngestionQueue.QueueName

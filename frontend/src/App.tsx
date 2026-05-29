@@ -5,11 +5,13 @@ import {
   sendTextMessage,
   sendImageMessage,
   checkHealth,
-  fetchConversationMessages,
-  deleteConversationApi,
   sendChatMessageStream,
 } from './services/api'
-import { fetchInitialData } from './services/graphql'
+import {
+  fetchInitialData,
+  fetchConversationMessagesGql,
+  deleteConversationGql,
+} from './services/graphql'
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/components/theme-provider";
 import { useAuth } from "@clerk/react";
@@ -234,7 +236,7 @@ export function App() {
     let active = true;
     async function loadMessages() {
       try {
-        const backendMessages = await fetchConversationMessages(
+        const backendMessages = await fetchConversationMessagesGql(
           convId,
           apiBaseUrl,
         );
@@ -421,7 +423,7 @@ export function App() {
     }
 
     // Backend deletion
-    deleteConversationApi(id, apiBaseUrl).catch((err) => {
+    deleteConversationGql(id, apiBaseUrl).catch((err) => {
       console.error(`Failed to delete conversation ${id} from backend:`, err);
       toast({
         title: "Delete Failed",

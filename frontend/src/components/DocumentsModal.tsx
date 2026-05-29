@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { RagDocument } from "../types";
-import { ingestRagDocument, ingestRagFile, deleteRagDocument } from "../services/api";
+import { ingestRagFile } from "../services/api";
+import { ingestRagDocumentGql, deleteRagDocumentGql } from "../services/graphql";
 import { useToast } from "./ui/Toast";
 import { Button } from "./ui/button";
 import {
@@ -154,7 +155,7 @@ export function DocumentsModal({
 
     setIsSubmitting(true);
     try {
-      await ingestRagDocument(name, pasteContent, tags, apiBaseUrl);
+      await ingestRagDocumentGql(name, pasteContent, tags, apiBaseUrl);
       toast({
         title: "Ingestion Success!",
         description: `"${name}" has been successfully vectorized.`,
@@ -184,7 +185,7 @@ export function DocumentsModal({
 
     setDeletingId(documentId)
     try {
-      await deleteRagDocument(documentId, apiBaseUrl)
+      await deleteRagDocumentGql(documentId, apiBaseUrl)
       toast({
         title: 'Document Deleted',
         description: `"${filename}" has been successfully removed.`,

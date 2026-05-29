@@ -82,6 +82,7 @@ graph TD
 
 ## Key Features
 
+- **Consolidated GraphQL API** — Consolidates initial data-loading (health, conversations list, and RAG document catalogue) and standard database CRUD operations (messages loading, conversation naming/deleting, RAG document deleting and text pasting) into a single, type-safe GraphQL endpoint to resolve the AWS Lambda concurrency cold-start wave.
 - **Serverless response streaming (SSE)** — Real-time response token streaming using `astream` via Lambda Web Adapter and Lambda Function URLs, bypassing API Gateway timeouts.
 - **Clerk authentication** — Comprehensive user registration, secure sign-in, session management, and JWT verification across endpoints.
 - **Decoupled asynchronous RAG ingestion** — Multipart file uploads are immediately accepted with an HTTP `202` response. A background worker handles layout parsing (via Textract), text splitting, embedding generation, and vector index updates.
@@ -136,6 +137,10 @@ chatbot-aws/
 │       ├── api/
 │       │   └── routes.py    # Route definitions (chat, streaming, RAG ingestion, conversation histories)
 │       │
+│       ├── graphql/
+│       │   ├── context.py   # Context builder injecting database and storage dependencies
+│       │   └── schema.py    # Strawberry GraphQL queries and mutations schema
+│       │
 │       ├── models/
 │       │   └── schemas.py   # Pydantic data schemas for API requests & responses
 │       │
@@ -151,7 +156,8 @@ chatbot-aws/
 │       │
 │       └── tests/
 │           ├── conftest.py  # Test fixtures and database/S3/LLM stubs
-│           └── test_rag.py  # Integration tests for ingestion worker and search
+│           ├── test_rag.py  # Integration tests for ingestion worker and search
+│           └── test_graphql.py # Integration tests for /graphql query and mutations endpoint
 │
 └── frontend/
     ├── package.json         # Node dependency definitions (managed with pnpm)
@@ -168,7 +174,8 @@ chatbot-aws/
         │
         └── services/
             ├── auth.ts      # Clerk session token bridge for non-React API calls
-            └── api.ts       # HTTP client endpoints and real-time SSE stream reader
+            ├── api.ts       # HTTP client endpoints and real-time SSE stream reader
+            └── graphql.ts   # GraphQL API client for queries and mutations (concurrency reduction)
 ```
 
 ---

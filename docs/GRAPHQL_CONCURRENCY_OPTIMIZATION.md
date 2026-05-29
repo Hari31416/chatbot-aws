@@ -1,6 +1,6 @@
 # GraphQL Concurrency & Serverless Cold Start Optimization
 
-This document outlines the architectural proposal to migrate the Chatbot application's initial data-loading operations to **GraphQL**. This change resolves the serverless **concurrency cold start wave** that occurs when a REST client boots and makes multiple parallel API requests.
+This document outlines the architecture to migrate the Chatbot application's initial data-loading and standard query/mutation operations (such as fetching messages, renaming/deleting conversations, and RAG document management) to **GraphQL**. This change resolves the serverless **concurrency cold start wave** that occurs when a REST client boots and makes multiple parallel API requests.
 
 ---
 
@@ -42,7 +42,7 @@ sequenceDiagram
 
 ---
 
-### 2.2. The GraphQL Single-Query (Proposed Behavior)
+### 2.2. The GraphQL Single-Query (Implemented Behavior)
 
 ```mermaid
 sequenceDiagram
@@ -66,7 +66,7 @@ sequenceDiagram
 
 ---
 
-## 3. Proposed Backend Architecture
+## 3. Implemented Backend Architecture
 
 We can use **Strawberry GraphQL**, a modern, type-safe Python GraphQL library built on top of dataclasses and Pydantic, which integrates seamlessly with FastAPI.
 
@@ -141,7 +141,7 @@ app.include_router(graphql_app, prefix="/graphql")
 
 ---
 
-## 4. Proposed Frontend Architecture
+## 4. Implemented Frontend Architecture
 
 We do not need heavy GraphQL libraries like Apollo or Relay. The standard browser `fetch` API is more than sufficient.
 
@@ -218,3 +218,32 @@ if (health.status === "ok") {
 ```
 
 - **Trade-off:** Sequential loading increases page-load time by the sum of individual database calls (~100ms - 200ms total), but completely resolves concurrent cold starts by reusing the same warmed Lambda container.
+
+
+---
+
+## 7. Extended Schema (Mutations and Messages)
+
+The GraphQL schema has been extended beyond initial startup data to support all standard query/mutation operations of the application, eliminating the REST endpoints for:
+- Fetching messages for a specific conversation
+- Updating conversation names
+- Deleting conversations
+- Ingesting text RAG documents
+- Deleting RAG documents
+
+Binary and streaming payloads (such as SSE token streaming `POST /chat/stream` and physical document uploads `POST /rag/ingest/file` / `POST /chat/image`) remain on REST for maximum streaming efficiency and standard multipart processing.
+
+### Extended Types
+- `MessageItem` (with `AttachmentItem` and `CitationItem` lists)
+- `DeleteConversationPayload`
+- `DeleteRagDocumentPayload`
+- `IngestRagTextPayload`
+
+### Queries
+- `conversationMessages(conversationId: String!)` -> Returns lists of messages.
+
+### Mutations
+- `updateConversationName(conversationId: String!, name: String!)`
+- `deleteConversation(conversationId: String!)`
+- `deleteRagDocument(documentId: String!)`
+- `ingestRagText(filename: String!, content: String!, tags: [String!]!)`

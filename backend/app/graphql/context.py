@@ -12,9 +12,11 @@ from ..dependencies import (
     get_optional_user_id,
     get_repository,
     get_vector_store,
+    get_storage,
 )
 from ..repositories.conversation_repository import ConversationRepository
 from ..services.vector_store import VectorStoreClient
+from ..services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +35,14 @@ class GraphQLContext(BaseContext):
         request: Request,
         repo: ConversationRepository,
         vector_store: VectorStoreClient,
+        storage: StorageService,
         user_id: Optional[str],
     ) -> None:
         super().__init__()
         self.request = request
         self.repo = repo
         self.vector_store = vector_store
+        self.storage = storage
         self.user_id = user_id
 
 
@@ -46,6 +50,7 @@ async def get_graphql_context(
     request: Request,
     repo: ConversationRepository = Depends(get_repository),
     vector_store: VectorStoreClient = Depends(get_vector_store),
+    storage: StorageService = Depends(get_storage),
     user_id: Optional[str] = Depends(get_optional_user_id),
 ) -> GraphQLContext:
     """
@@ -59,6 +64,7 @@ async def get_graphql_context(
         request=request,
         repo=repo,
         vector_store=vector_store,
+        storage=storage,
         user_id=user_id,
     )
 

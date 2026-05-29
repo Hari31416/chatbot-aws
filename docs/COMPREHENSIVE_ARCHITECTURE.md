@@ -39,6 +39,14 @@ When a user interacts with the system, their requests traverse distinct pathways
 6. **Embeddings & Vector Indexing**: The text is chunked, converted to 768-dimensional dense vectors via Gemini embeddings, and indexed into the native **AWS S3 Vectors** store (`AWS::S3Vectors::Index`).
 7. **Status Update**: The worker updates the document status to `ready` (or `failed`) in DynamoDB and purges the temporary staging object from S3.
 
+### Flow C: Consolidated Queries and Mutations via GraphQL (`POST /graphql`)
+
+1. **Request Ingress**: The client sends an HTTP POST request targeting `/graphql`.
+2. **Consolidation**: Page initialization queries (health check, user conversations list, and RAG document catalogue) are merged into a single GraphQL query payload.
+3. **Execution**: The backend Strawberry GraphQL router resolves individual fields concurrently via the asyncio event loop.
+4. **Mutations**: Conversation updates, deletions, and plain text RAG document text ingestion are processed as GraphQL mutations (`updateConversationName`, `deleteConversation`, `deleteRagDocument`, `ingestRagText`).
+5. **Unified Channel**: The application eliminates multiple concurrent REST roundtrips, reducing cold-start wave concurrency to exactly **1 request**.
+
 ---
 
 ## 3. Comprehensive AWS Service Directory

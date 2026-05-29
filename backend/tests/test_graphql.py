@@ -19,6 +19,7 @@ from app.dependencies import (
     get_repository,
     get_settings,
     get_vector_store,
+    get_storage,
 )
 from app.settings import Settings
 
@@ -63,6 +64,7 @@ def gql_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
 
     repo = InMemoryConversationRepository()
     vector_store = FakeVectorStore()
+    storage = InMemoryStorageService()
     settings = Settings(
         dynamodb_table_name="test",
         s3_bucket_name="test-bucket",
@@ -73,9 +75,13 @@ def gql_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     app.dependency_overrides[get_repository] = lambda: repo
     app.dependency_overrides[get_vector_store] = lambda: vector_store
     app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_storage] = lambda: storage
 
     # Seed one conversation and one RAG document for "admin"
     repo.create_conversation("conv-1", "2024-01-01T00:00:00Z", "admin", "Hello World")
+    repo.put_message(
+        "conv-1", "msg-1", "user", "Hello", "2024-01-01T00:00:01Z", user_id="admin"
+    )
     repo.put_rag_document(
         "admin", "doc-1", "guide.pdf", 5, "2024-01-01T00:00:00Z", "ready", ["ai"]
     )
@@ -239,3 +245,54 @@ def test_graphql_initial_data_partial_auth_enabled(gql_client: TestClient) -> No
         )
     finally:
         app.dependency_overrides.pop(get_optional_user_id, None)
+
+
+# ── tests: conversation messages and mutations ────────────────────────────────
+
+
+def test_graphql_conversation_messages(authed_client: TestClient) -> None:
+    query = '{"query": "{ conversationMessages(conversationId: \\"conv-1\\") { id role content } }"}'
+    data = _post(authed_client, query, token="admin")
+    assert "errors" not in data, data.get("errors")
+    messages = data["data"]["conversationMessages"]
+    assert len(messages) == 1
+    assert messages[0]["id"] == "msg-1"
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "Hello"
+
+
+def test_graphql_mutation_update_conversation_name(authed_client: TestClient) -> None:
+    query = '{"query": "mutation { updateConversationName(conversationId: \\"conv-1\\", name: \\"New Name\\") { id name } }"}'
+    data = _post(authed_client, query, token="admin")
+    assert "errors" not in data, data.get("errors")
+    conv = data["data"]["updateConversationName"]
+    assert conv["id"] == "conv-1"
+    assert conv["name"] == "New Name"
+
+
+def test_graphql_mutation_delete_conversation(authed_client: TestClient) -> None:
+    query = '{"query": "mutation { deleteConversation(conversationId: \\"conv-1\\") { deleted conversationId } }"}'
+    data = _post(authed_client, query, token="admin")
+    assert "errors" not in data, data.get("errors")
+    res = data["data"]["deleteConversation"]
+    assert res["deleted"] is True
+    assert res["conversationId"] == "conv-1"
+
+
+def test_graphql_mutation_delete_rag_document(authed_client: TestClient) -> None:
+    query = '{"query": "mutation { deleteRagDocument(documentId: \\"doc-1\\") { deleted documentId } }"}'
+    data = _post(authed_client, query, token="admin")
+    assert "errors" not in data, data.get("errors")
+    res = data["data"]["deleteRagDocument"]
+    assert res["deleted"] is True
+    assert res["documentId"] == "doc-1"
+
+
+def test_graphql_mutation_ingest_rag_text(authed_client: TestClient) -> None:
+    query = '{"query": "mutation { ingestRagText(filename: \\"test.txt\\", content: \\"hello world\\", tags: [\\"test\\"]) { status filename documentId chunksIngested } }"}'
+    data = _post(authed_client, query, token="admin")
+    assert "errors" not in data, data.get("errors")
+    res = data["data"]["ingestRagText"]
+    assert res["status"] == "processing"
+    assert res["filename"] == "test.txt"
+    assert res["chunksIngested"] == 0

@@ -219,10 +219,7 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub chatbot-table-${Environment}
-      BillingMode: PROVISIONED
-      ProvisionedThroughput:
-        ReadCapacityUnits: 5
-        WriteCapacityUnits: 5
+      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: pk
           AttributeType: S
@@ -249,9 +246,6 @@ Resources:
               - name
               - created_at
               - updated_at
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -357,6 +351,7 @@ Resources:
     Properties:
       QueueName: !Sub chatbot-ingestion-queue-${Environment}
       VisibilityTimeout: 180 # Must be >= Ingestion Worker Timeout (120s)
+      ReceiveMessageWaitTimeSeconds: 20
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
         maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
@@ -427,6 +422,8 @@ Resources:
           Properties:
             Queue: !GetAtt IngestionQueue.Arn
             BatchSize: 1 # Process one file at a time
+            ScalingConfig:
+              MaximumConcurrency: 2
 
   ChatbotIngestionWorkerFunctionLogGroup:
     Type: AWS::Logs::LogGroup

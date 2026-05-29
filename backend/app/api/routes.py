@@ -14,7 +14,6 @@ from fastapi.responses import StreamingResponse
 from ..dependencies import (
     get_current_user_id,
     get_llm_client,
-    get_rag_service,
     get_repository,
     get_settings,
     get_storage,
@@ -41,7 +40,6 @@ from ..services.prompt import (
     build_image_chat_messages,
     build_rag_chat_messages,
     build_reformulate_prompt,
-    build_user_content,
 )
 from ..services.storage import build_image_key, extension_for_mime
 
@@ -50,6 +48,12 @@ from ..utils.time import to_epoch_seconds, utcnow, utcnow_iso
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.api_route("/warm", methods=["GET", "POST"])
+def warm() -> dict[str, str]:
+    logger.info("Warmer endpoint called; container kept warm")
+    return {"status": "warmed"}
 
 
 async def _load_history(repo, conversation_id: str, max_messages: int) -> list[dict]:
@@ -681,7 +685,12 @@ async def ingest_rag_file(
     user_id: str = Depends(get_current_user_id),
 ) -> RagIngestResponse:
     filename = file.filename or "uploaded_document"
-    logger.info("RAG file ingest request filename=%s user_id=%s tags=%s", filename, user_id, tags)
+    logger.info(
+        "RAG file ingest request filename=%s user_id=%s tags=%s",
+        filename,
+        user_id,
+        tags,
+    )
 
     # 1. Enforce 20MB maximum file size limit
     data = await file.read()

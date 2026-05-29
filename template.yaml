@@ -60,7 +60,7 @@ Parameters:
 Globals:
   Function:
     Timeout: 30
-    MemorySize: 1536
+    MemorySize: 1024
     Runtime: python3.12
     Architectures:
       - arm64
@@ -135,6 +135,7 @@ Resources:
         Variables:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
           AWS_LWA_INVOKE_MODE: response_stream
+          AWS_LWA_PASS_THROUGH_PATH: "/warm"
           PORT: "8080"
       FunctionUrlConfig:
         AuthType: NONE
@@ -173,6 +174,14 @@ Resources:
             Path: /health
             Method: GET
             ApiId: !Ref ChatbotHttpApi
+        # EventBridge Warmup Schedule (Runs every 5 minutes)
+        WarmingScheduleEvent:
+          Type: Schedule
+          Properties:
+            Schedule: "rate(5 minutes)"
+            Description: "Pings the API warm endpoint every 5 minutes to keep the container warm"
+            Enabled: true
+            Input: '{"path": "/warm", "httpMethod": "GET", "headers": {}, "requestContext": {}}'
 
 
   ChatbotBackendFunctionLogGroup:
@@ -381,7 +390,7 @@ Resources:
       CodeUri: ./backend
       Handler: app.worker.handler
       Timeout: 120
-      MemorySize: 1536
+      MemorySize: 1024
       Policies:
         - SQSPollerPolicy:
             QueueName: !GetAtt IngestionQueue.QueueName

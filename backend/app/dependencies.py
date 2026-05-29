@@ -171,7 +171,6 @@ def get_rag_service(
     )
 
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -390,3 +389,20 @@ def _first_string_claim(
     if default is not None:
         return default
     return cast(str, "")
+
+
+def get_optional_user_id(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> str | None:
+    """
+    Non-raising variant of ``get_current_user_id`` used by the GraphQL context.
+
+    Returns ``None`` when no valid auth token is present instead of raising an
+    ``HTTPException``.  Individual resolvers that require authentication call
+    ``_require_user(info.context)`` to enforce auth at the field level, which
+    allows the ``health`` field to remain publicly accessible without a token.
+    """
+    try:
+        return get_current_user_id(request, settings)
+    except HTTPException:
+        return None

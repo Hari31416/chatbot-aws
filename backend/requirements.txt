@@ -40,12 +40,16 @@ colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   click
     #   tqdm
+cross-web==0.7.0
+    # via strawberry-graphql
 cryptography==48.0.0
     # via chatbot-backend
 distro==1.9.0
     # via openai
 fastapi==0.136.1
-    # via chatbot-backend
+    # via
+    #   chatbot-backend
+    #   strawberry-graphql
 fastuuid==0.14.0
     # via litellm
 filelock==3.29.0
@@ -56,6 +60,8 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.4.0
     # via huggingface-hub
+graphql-core==3.2.8
+    # via strawberry-graphql
 h11==0.16.0
     # via
     #   httpcore
@@ -104,7 +110,9 @@ multidict==6.7.1
 openai==2.37.0
     # via litellm
 packaging==26.2
-    # via huggingface-hub
+    # via
+    #   huggingface-hub
+    #   strawberry-graphql
 propcache==0.5.2
     # via
     #   aiohttp
@@ -125,12 +133,16 @@ pygments==2.20.0
     # via rich
 pyjwt==2.13.0
     # via chatbot-backend
+python-dateutil==2.9.0.post0
+    # via strawberry-graphql
 python-dotenv==1.2.2
     # via
     #   litellm
     #   pydantic-settings
 python-multipart==0.0.29
-    # via chatbot-backend
+    # via
+    #   chatbot-backend
+    #   strawberry-graphql
 pyyaml==6.0.3
     # via huggingface-hub
 referencing==0.37.0
@@ -149,10 +161,14 @@ rpds-py==0.30.0
     #   referencing
 shellingham==1.5.4
     # via typer
+six==1.17.0
+    # via python-dateutil
 sniffio==1.3.1
     # via openai
 starlette==1.0.0
     # via fastapi
+strawberry-graphql==0.316.0
+    # via chatbot-backend
 tiktoken==0.13.0
     # via litellm
 tokenizers==0.23.1
@@ -167,6 +183,7 @@ typing-extensions==4.15.0
     # via
     #   aiosignal
     #   anyio
+    #   cross-web
     #   fastapi
     #   huggingface-hub
     #   mangum
@@ -175,6 +192,7 @@ typing-extensions==4.15.0
     #   pydantic-core
     #   referencing
     #   starlette
+    #   strawberry-graphql
     #   typing-inspection
 typing-inspection==0.4.2
     # via

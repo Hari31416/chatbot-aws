@@ -12,6 +12,7 @@ dependencies = [
   "mangum>=0.17.0",
   "PyJWT>=2.8.0",
   "cryptography>=42.0.0",
+  "strawberry-graphql[fastapi]>=0.227.0",
 ]
 
 [project.optional-dependencies]

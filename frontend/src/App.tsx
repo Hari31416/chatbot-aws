@@ -1,16 +1,15 @@
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { Message, Conversation, ActiveCitationInfo } from "./types";
+import type { Message, Conversation, ActiveCitationInfo, RagDocument } from "./types";
 import {
   sendTextMessage,
   sendImageMessage,
   checkHealth,
-  fetchConversations,
   fetchConversationMessages,
   deleteConversationApi,
   sendChatMessageStream,
-  fetchRagDocuments,
-} from "./services/api";
+} from './services/api'
+import { fetchInitialData } from './services/graphql'
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/components/theme-provider";
 import { useAuth } from "@clerk/react";
@@ -137,12 +136,18 @@ export function App() {
     refetchInterval: 30000,
   });
 
-  const { data: ragDocuments = [], refetch: refetchRagDocuments } = useQuery({
-    queryKey: ["ragDocuments", apiBaseUrl, isLoggedIn],
-    queryFn: () => fetchRagDocuments(apiBaseUrl),
-    enabled: Boolean(apiBaseUrl && isLoggedIn && isBackendOnline),
-    refetchInterval: 30000,
-  });
+  // --- Initial data: fetch health + conversations + ragDocuments in one GraphQL call ---
+  const [ragDocuments, setRagDocuments] = React.useState<RagDocument[]>([])
+  const refetchRagDocuments = React.useCallback(async () => {
+    if (!apiBaseUrl || !isLoggedIn) return
+    try {
+      const data = await fetchInitialData(apiBaseUrl)
+      setConversations(data.conversations)
+      setRagDocuments(data.ragDocuments)
+    } catch (err: unknown) {
+      console.error('Failed to refresh initial data:', err)
+    }
+  }, [apiBaseUrl, isLoggedIn])
 
   // --- Sync configs and sessions ---
   React.useEffect(() => {
@@ -177,26 +182,27 @@ export function App() {
     localStorage.setItem("messages_cache", JSON.stringify(messages));
   }, [messages]);
 
-  // Fetch conversations from backend on mount or when API URL / Login State changes
+  // Fetch conversations + ragDocuments in a single GraphQL call on mount / login change
   React.useEffect(() => {
-    if (!apiBaseUrl || !isLoggedIn) return;
+    if (!apiBaseUrl || !isLoggedIn) return
 
-    let active = true;
-    async function loadConversations() {
+    let active = true
+    async function loadInitialData() {
       try {
-        const backendConvs = await fetchConversations(apiBaseUrl);
+        const data = await fetchInitialData(apiBaseUrl)
         if (active) {
-          setConversations(backendConvs);
+          setConversations(data.conversations)
+          setRagDocuments(data.ragDocuments)
         }
-      } catch (err: any) {
-        console.error("Failed to fetch conversations from backend:", err);
+      } catch (err: unknown) {
+        console.error('Failed to fetch initial data via GraphQL:', err)
       }
     }
-    loadConversations();
+    void loadInitialData()
     return () => {
-      active = false;
-    };
-  }, [apiBaseUrl, isLoggedIn, userId]);
+      active = false
+    }
+  }, [apiBaseUrl, isLoggedIn, userId])
 
   // Fetch messages for active conversation from backend when activeConversationId changes
   React.useEffect(() => {

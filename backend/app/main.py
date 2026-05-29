@@ -1,11 +1,15 @@
 import logging
+import os
 from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
+from strawberry.fastapi import GraphQLRouter
 
 from .api.routes import router
+from .graphql.context import get_graphql_context
+from .graphql.schema import schema
 from .logging_config import configure_logging
 
 configure_logging()
@@ -23,6 +27,20 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+# ── GraphQL endpoint ───────────────────────────────────────────────────────────
+# Playground is disabled by default (recommended for Lambda / production).
+# Set GRAPHQL_PLAYGROUND=true in the environment to enable GraphiQL locally.
+_graphql_ide = (
+    "graphiql" if os.getenv("GRAPHQL_PLAYGROUND", "").lower() == "true" else None
+)
+
+graphql_app: GraphQLRouter = GraphQLRouter(
+    schema,
+    context_getter=get_graphql_context,
+    graphql_ide=_graphql_ide,
+)
+app.include_router(graphql_app, prefix="/graphql")
 
 
 @app.get("/health")

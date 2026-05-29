@@ -305,7 +305,7 @@ Environment:
     LITELLM_VISION_MODEL: !Ref LiteLlmVisionModel
     LITELLM_EMBEDDING_MODEL: !Ref LiteLlmEmbeddingModel
     LITELLM_VISION_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
-    LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
+    LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_embedding_api_key
     S3_VECTOR_BUCKET_NAME: !Ref S3VectorBucketName
     S3_VECTOR_INDEX_NAME: !Ref S3VectorIndexName
     EMBEDDING_DIMENSION: 768
@@ -518,13 +518,16 @@ ChatbotTable:
   Type: AWS::DynamoDB::Table
   Properties:
     TableName: !Sub chatbot-table-${Environment}
-    BillingMode: PAY_PER_REQUEST
+    BillingMode: PROVISIONED
+    ProvisionedThroughput:
+      ReadCapacityUnits: 2
+      WriteCapacityUnits: 2
 ```
 
 - **Explanation:** Deploys a single-table DynamoDB instance.
-- **`BillingMode: PAY_PER_REQUEST`**: Configures the DynamoDB table to use On-Demand capacity.
-- **Why it was chosen:** Switching from Provisioned to Pay-Per-Request (On-Demand) eliminates all hourly capacity charges (which previously accrued 24/7 at 10 RCU/WCU per stack). Under low-traffic development or sandbox conditions (especially with multiple environments like prod + staging), On-Demand guarantees $0.00 idle costs and avoids exhausting the 18,600 RCU-Hours free tier limit.
-- **Alternatives:** Provisioned capacity (useful for high, predictable traffic but wasteful for idle or multi-environment sandbox stacks).
+- **`BillingMode: PROVISIONED`**: Configures the DynamoDB table to use Provisioned capacity.
+- **Why it was chosen:** Shifting from Pay-Per-Request (On-Demand) to Provisioned capacity (configured at 2 RCU and 2 WCU for the base table and GSI, with auto-scaling up to 8) takes advantage of the DynamoDB Always-Free Tier which provides up to 25 RCU and 25 WCU across all tables. Under low-traffic personal projects, provisioned capacity with these low limits is entirely free of charge, whereas Pay-Per-Request charges for every single read/write request.
+- **Alternatives:** Pay-Per-Request (On-Demand) capacity.
 
 ```yaml
 AttributeDefinitions:

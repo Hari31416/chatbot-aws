@@ -74,7 +74,7 @@ Globals:
         LITELLM_VISION_MODEL: !Ref LiteLlmVisionModel
         LITELLM_EMBEDDING_MODEL: !Ref LiteLlmEmbeddingModel
         LITELLM_VISION_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
-        LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_vision_api_key
+        LITELLM_EMBEDDING_API_KEY_PARAMETER: /chatbot/litellm_embedding_api_key
         S3_VECTOR_BUCKET_NAME: !Ref S3VectorBucketName
         S3_VECTOR_INDEX_NAME: !Ref S3VectorIndexName
         EMBEDDING_DIMENSION: 768
@@ -112,6 +112,8 @@ Resources:
             ParameterName: chatbot/litellm_api_key
         - SSMParameterReadPolicy:
             ParameterName: chatbot/litellm_vision_api_key
+        - SSMParameterReadPolicy:
+            ParameterName: chatbot/litellm_embedding_api_key
         - Statement:
             - Effect: Allow
               Action:
@@ -181,7 +183,7 @@ Resources:
             Schedule: "rate(5 minutes)"
             Description: "Pings the API warm endpoint every 5 minutes to keep the container warm"
             Enabled: true
-            Input: '{"path": "/warm", "httpMethod": "GET", "headers": {}, "requestContext": {}}'
+            Input: '{"version": "2.0", "rawPath": "/warm", "headers": {}, "requestContext": {"http": {"method": "GET", "path": "/warm"}}}'
 
 
   ChatbotBackendFunctionLogGroup:
@@ -219,7 +221,10 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub chatbot-table-${Environment}
-      BillingMode: PAY_PER_REQUEST
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 2
+        WriteCapacityUnits: 2
       AttributeDefinitions:
         - AttributeName: pk
           AttributeType: S
@@ -246,6 +251,9 @@ Resources:
               - name
               - created_at
               - updated_at
+          ProvisionedThroughput:
+            ReadCapacityUnits: 2
+            WriteCapacityUnits: 2
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -397,6 +405,8 @@ Resources:
             ParameterName: chatbot/litellm_api_key
         - SSMParameterReadPolicy:
             ParameterName: chatbot/litellm_vision_api_key
+        - SSMParameterReadPolicy:
+            ParameterName: chatbot/litellm_embedding_api_key
         - Statement:
             - Effect: Allow
               Action:
@@ -430,6 +440,86 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${ChatbotIngestionWorkerFunction}
       RetentionInDays: 7
+
+  TableReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 8
+      MinCapacity: 2
+      ResourceId: !Sub table/${ChatbotTable}
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+
+  TableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: TableReadAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref TableReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  TableWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 8
+      MinCapacity: 2
+      ResourceId: !Sub table/${ChatbotTable}
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+
+  TableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: TableWriteAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref TableWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  GSIReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 8
+      MinCapacity: 2
+      ResourceId: !Sub table/${ChatbotTable}/index/UserConversationsIndexV2
+      ScalableDimension: dynamodb:index:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+
+  GSIReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: GSIReadAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref GSIReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  GSIWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 8
+      MinCapacity: 2
+      ResourceId: !Sub table/${ChatbotTable}/index/UserConversationsIndexV2
+      ScalableDimension: dynamodb:index:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+
+  GSIWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: GSIWriteAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref GSIWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
 
 Outputs:
   ApiUrl:

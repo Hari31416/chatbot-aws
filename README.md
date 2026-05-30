@@ -14,8 +14,9 @@ The entire platform is built with a serverless-first philosophy, ensuring high s
 - **FastAPI Backend Application** runs inside an arm64 AWS Lambda function. Traffic is handled by API Gateway HTTP API v2 and Lambda Function URLs.
 - **AWS Lambda Web Adapter (LWA)** serves as the execution wrapper on Lambda. In response streaming mode (`response_stream`), it bridges the FastAPI application's ASGI Server-Sent Events (SSE) directly to the client via Lambda Function URLs, bypassing API Gateway's lack of native streaming support.
 - **Clerk Authentication** provides secure user registration, sign-in, and session management, while the backend FastAPI application validates Clerk JWTs in the `Authorization` header.
-- **Amazon SQS Ingestion Queue** handles background document processing. When a document is uploaded, it lands in the staging area of a private S3 bucket. This triggers an S3 Event Notification to SQS, decoupling the ingestion workload from the API request lifecycle.
-- **Asynchronous Ingestion Worker** is an isolated Lambda function triggered by SQS. It downloads files, processes multi-page binaries using AWS Textract, splits and chunks text, computes embeddings via LiteLLM, indexes them in a native **Amazon S3 Vectors** store, and updates the document status in DynamoDB.
+- **Ingestion Initializer (Lambda 1)** is triggered directly by S3 ObjectCreated events. It acts as the routing manager: text files are routed directly to SQS (ProcessorQueue), while binary files (.pdf, images) are copied to a raw directory in S3 and queued under an asynchronous Amazon Textract job mapped in DynamoDB.
+- **SNS & SQS ProcessorQueue** decouples completions. Textract publishes completed job notifications to the SNS topic, which routes them to the SQS ProcessorQueue alongside direct text events.
+- **Ingestion Processor (Lambda 2)** is triggered by SQS. It retrieves Textract layout text in a single SDK call (no CPU wait-loops), chunks the text, computes Gemini embeddings, and indexes them in a native **Amazon S3 Vectors** store before updating DynamoDB and deleting temporary files.
 
 ### System Architecture Diagrams
 
@@ -37,9 +38,11 @@ graph TD
     SSM["SSM Parameter Store"]
     LiteLLM["LiteLLM Gateway"]
     S3Vectors["Amazon S3 Vectors Index"]
-    SQS["SQS Ingestion Queue"]
-    DLQ["SQS Ingestion DLQ"]
-    Worker["Worker Lambda Function (app.worker.handler)"]
+    SNS["SNS TextractTopic"]
+    SQS["SQS ProcessorQueue"]
+    DLQ["SQS ProcessorDLQ"]
+    L1["Initializer Lambda (L1)"]
+    L2["Processor Lambda (L2)"]
     Textract["AWS Textract"]
 
     Client -->|1. Authenticate & Obtain JWT| Clerk
@@ -52,15 +55,19 @@ graph TD
     LambdaStream -->|8. Request Chat Completion| LiteLLM
     LambdaStream -->|9. Query Vector Context| S3Vectors
 
-    S3Storage -->|10. ObjectCreated Event staging/*| SQS
-    SQS -->|11. Trigger BatchSize=1| Worker
+    S3Storage -->|10. S3 Event Notification staging/*| L1
+    L1 -->|11a. Copy & Start OCR| Textract
+    L1 -->|11b. Save mapping| DDB
+    L1 -->|11c. Direct payload - text path| SQS
+    Textract -->|12. Post success event| SNS
+    SNS -->|13. Route completion| SQS
+    SQS -->|14. Trigger BatchSize=1| L2
     SQS -.-|DLQ Re-drive policy| DLQ
-    Worker -->|12. Fetch raw file from S3| S3Storage
-    Worker -->|13. Start & poll multi-page text extraction| Textract
-    Worker -->|14. Calculate embeddings via LiteLLM| LiteLLM
-    Worker -->|15. Upsert embeddings & metadata| S3Vectors
-    Worker -->|16. Set Document Status to ready/failed| DDB
-    Worker -->|17. Clean up staging object| S3Storage
+    L2 -->|15. Get OCR layout blocks| Textract
+    L2 -->|16. Calculate embeddings via LiteLLM| LiteLLM
+    L2 -->|17. Upsert embeddings & metadata| S3Vectors
+    L2 -->|18. Set Document Status to ready/failed| DDB
+    L2 -->|19. Clean up staging & raw objects| S3Storage
 ```
 
 ### AWS Services Used
@@ -68,8 +75,8 @@ graph TD
 | Service | Purpose | Billing Model |
 |---|---|---|
 | **API Gateway HTTP API v2** | Proxy entrypoint for standard REST API endpoints (GET/POST/PUT/DELETE) | PAY-PER-REQUEST (1M requests/month free tier) |
-| **AWS Lambda (arm64 Graviton)** | Hosts both the FastAPI REST API and the SQS Ingestion Worker function | DURATION + INVOCATIONS (1M free requests/month) |
-| **Amazon SQS & DLQ** | Decoupled queue for queuing heavy document parsing and embedding tasks | PAY-PER-REQUEST (1M free messages/month) |
+| **AWS Lambda (arm64 Graviton)** | Hosts standard FastAPI REST API, Ingestion Initializer (L1), and Ingestion Processor (L2) | DURATION + INVOCATIONS (1M free requests/month) |
+| **Amazon SQS & DLQ** | buffers Textract completion notifications and direct text payloads | PAY-PER-REQUEST (1M free messages/month) |
 | **Amazon S3 (Private Bucket)** | Secure storage for staging documents and presigned image attachments | SIZE + REQUESTS (5 GB free tier) |
 | **Amazon S3 (Public Bucket)** | Hosts static compiled React, TypeScript, and TailwindCSS assets | SIZE + REQUESTS (5 GB free tier) |
 | **Amazon S3 Vectors** | Fully native vector database index layered directly on top of Amazon S3 | SIZE + COMPUTE (Serverless, cheap high-density search) |
@@ -85,7 +92,7 @@ graph TD
 - **Consolidated GraphQL API** — Consolidates initial data-loading (health, conversations list, and RAG document catalogue) and standard database CRUD operations (messages loading, conversation naming/deleting, RAG document deleting and text pasting) into a single, type-safe GraphQL endpoint to resolve the AWS Lambda concurrency cold-start wave.
 - **Serverless response streaming (SSE)** — Real-time response token streaming using `astream` via Lambda Web Adapter and Lambda Function URLs, bypassing API Gateway timeouts.
 - **Clerk authentication** — Comprehensive user registration, secure sign-in, session management, and JWT verification across endpoints.
-- **Decoupled asynchronous RAG ingestion** — Multipart file uploads are immediately accepted with an HTTP `202` response. A background worker handles layout parsing (via Textract), text splitting, embedding generation, and vector index updates.
+- **Decoupled asynchronous RAG ingestion** — Multipart file uploads are immediately accepted with an HTTP `202` response. A hybrid Initializer (L1) -> SNS -> SQS -> Processor (L2) pipeline processes documents out-of-band without Lambda busy-waiting compute cost.
 - **Fully native vector search** — Powered by Amazon S3 Vectors. Supports dense similarity searches scoped by `user_id` without external database servers.
 - **Multimodal chat** — Upload PNG, JPEG, and WebP images (≤ 5MB) during conversations. Images are stored privately in S3, and served using expiring presigned URLs (1-hour TTL).
 - **Persistent single-table DynamoDB history** — Highly optimized single-table DynamoDB design storing metadata, individual messages, and conversation context.
@@ -129,7 +136,8 @@ chatbot-aws/
 │   │
 │   └── app/
 │       ├── main.py          # FastAPI application initialization & Mangum ASGI handler
-│       ├── worker.py        # SQS event handler consuming staging files and indexing vectors
+│       ├── worker_initializer.py # Lambda 1: parses S3 keys and routes staging files
+│       ├── worker_processor.py   # Lambda 2: consumes SQS and executes text embedding/indexing
 │       ├── settings.py      # Pydantic configuration settings loaded from env vars
 │       ├── dependencies.py  # Dependency providers (DynamoDB, S3, SSM, LLM, Vector Store)
 │       ├── logging_config.py# CloudWatch-compliant logging structure
@@ -156,7 +164,9 @@ chatbot-aws/
 │       │
 │       └── tests/
 │           ├── conftest.py  # Test fixtures and database/S3/LLM stubs
-│           ├── test_rag.py  # Integration tests for ingestion worker and search
+│           ├── test_rag.py  # Integration tests for search logic
+│           ├── test_worker_initializer.py # Unit tests for ingestion Initializer
+│           ├── test_worker_processor.py   # Unit tests for ingestion Processor
 │           └── test_graphql.py # Integration tests for /graphql query and mutations endpoint
 │
 └── frontend/
@@ -221,7 +231,7 @@ sequenceDiagram
 
 ### Event-Driven Asynchronous Ingestion & Vector Indexing
 
-To support large, multi-page documents (PDFs, Images, Text files) without hitting API Gateway timeouts, document ingestion runs asynchronously via an S3-SQS-Worker pattern.
+To support large, multi-page documents (PDFs, Images, Text files) without hitting API Gateway timeouts, document ingestion runs asynchronously via a hybrid Initializer -> SNS -> SQS -> Processor two-lambda architecture.
 
 ```mermaid
 sequenceDiagram
@@ -230,9 +240,11 @@ sequenceDiagram
     participant API as FastAPI Lambda (API Gateway)
     participant DDB as DynamoDB Single-Table
     participant S3 as Amazon S3 (Staging)
-    participant SQS as SQS Ingestion Queue
-    participant Worker as Ingestion Worker Lambda
+    participant L1 as Initializer (Lambda 1)
     participant Textract as AWS Textract
+    participant SNS as SNS TextractTopic
+    participant SQS as SQS ProcessorQueue
+    participant L2 as Processor (Lambda 2)
     participant LiteLLM as LiteLLM Embeddings
     participant S3Vectors as Amazon S3 Vectors
 
@@ -243,23 +255,38 @@ sequenceDiagram
     
     Note over Client: UI starts polling /rag/documents
     
-    S3->>SQS: Publish ObjectCreated Event Notification
-    SQS->>Worker: SQS Trigger (BatchSize=1)
-    Worker->>S3: Download file bytes & Content-Type
+    S3->>L1: S3 Direct Notification (ObjectCreated event)
+    L1->>DDB: update_rag_document_status (status='processing')
     
     alt is Binary (PDF, PNG, JPG, TIFF)
-        Worker->>Textract: Detect text / Extract layout
-        Textract-->>Worker: Extracted document lines
-    else is Text (TXT, MD, JSON)
-        Note over Worker: Decode UTF-8 directly
+        L1->>S3: Copy staging file to rag-raw-uploads/
+        L1->>Textract: StartDocumentTextDetection (NotificationChannel -> SNS)
+        L1->>DDB: Save TEXTRACT#job_id mapping
+    else is Text (TXT, MD)
+        L1->>SQS: Send direct payload message (source='text')
     end
-
-    Worker->>LiteLLM: Generate text embeddings (gemini-embedding-2)
-    LiteLLM-->>Worker: Dense vectors (768-dim)
     
-    Worker->>S3Vectors: Upsert vectors & metadata to S3 Vectors Index
-    Worker->>DDB: update_rag_document_status (status='ready', chunks_count)
-    Worker->>S3: delete_object (staging file)
+    Note over Textract: Asynchronous OCR execution
+    
+    Textract->>SNS: Publish completion notification (Status=SUCCEEDED)
+    SNS->>SQS: Forward notification to queue
+    
+    SQS->>L2: SQS Trigger (BatchSize=1)
+    
+    alt source is textract
+        L2->>DDB: Look up job_id mapping -> document metadata
+        L2->>Textract: GetDocumentTextDetection (retrieve layout results)
+        L2->>S3: Delete raw uploads file
+    else source is text
+        L2->>S3: Download staging file bytes
+    end
+    
+    L2->>LiteLLM: Generate text embeddings (gemini-embedding-2)
+    LiteLLM-->>L2: Dense vectors (768-dim)
+    
+    L2->>S3Vectors: Upsert vectors & metadata to S3 Vectors Index
+    L2->>DDB: update_rag_document_status (status='ready', chunks_count)
+    L2->>S3: Delete staging file
     
     Note over Client: Polling detects status='ready' and updates UI catalog
 ```
@@ -273,7 +300,8 @@ All persistent application data resides in a single DynamoDB table. Access patte
 | **Conversation Metadata** | `CONV#<conversation_id>` | `META` | `user_id`, `name`, `created_at`, `updated_at` |
 | **Conversation Message** | `CONV#<conversation_id>` | `MSG#<timestamp>#<message_id>` | `role`, `content`, `attachment` (metadata map), `created_at` |
 | **Sliding Context Window** | `CONV#<conversation_id>` | `CTX` | `messages` (JSON list of last N interactions), `ttl` (epoch epoch), `updated_at` |
-| **RAG Document Catalog** | `USER#<user_id>` | `DOC#<document_id>` | `filename`, `chunks_ingested`, `status` (`processing`/`ready`/`failed`), `created_at`, `updated_at` |
+| **RAG Document Catalog** | `USER#<user_id>` | `RAGDOC#<created_at>#<document_id>` | `filename`, `chunks_ingested`, `status` (`processing`/`ready`/`failed`), `created_at`, `updated_at` |
+| **Textract Job Mapping** | `TEXTRACT#<job_id>` | `JOB` | `document_id`, `user_id`, `filename`, `s3_raw_key`, `created_at`, `ttl` |
 
 ---
 

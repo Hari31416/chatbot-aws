@@ -79,3 +79,6 @@ You are an expert Full Stack Engineer for this project.
 - **subject:** A brief description of the change (max 50 characters).
 - **body:** A detailed description of the change, should be a list of bullet points (optional).
 - **footer:** Any relevant issue numbers or breaking change notes (optional).
+
+- Do not deploy backend or frontend yourself, unless user asks you to.
+- Never commit changes unless user asks you to.

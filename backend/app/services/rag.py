@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -38,9 +40,13 @@ class RagService:
         self.s3_bucket_name = s3_bucket_name
         self.textract_client = textract_client
 
-
     async def ingest_document(
-        self, filename: str, content: str, user_id: str, document_id: str | None = None, tags: list[str] | None = None
+        self,
+        filename: str,
+        content: str,
+        user_id: str,
+        document_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> RagIngestResult:
         chunks = self.split_text(content)
         if not document_id:
@@ -48,7 +54,31 @@ class RagService:
         if not chunks:
             return RagIngestResult(document_id=document_id, chunks_ingested=0)
 
-        embeddings = await self.vector_store.get_embeddings(chunks)
+        # Exponential backoff retry around get_embeddings for rate-limit errors
+        max_retries = 5
+        base_delay = 2.0
+        for attempt in range(max_retries):
+            try:
+                embeddings = await self.vector_store.get_embeddings(chunks)
+                break
+            except Exception as exc:
+                err_str = str(exc).lower()
+                is_rate_limit = any(
+                    kw in err_str
+                    for kw in ("rate", "429", "quota", "resource_exhausted")
+                )
+                if not is_rate_limit or attempt == max_retries - 1:
+                    raise
+                delay = base_delay * (2**attempt)
+                logger.warning(
+                    "Embedding rate-limit hit (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+
         keys = [f"{document_id}#chunk-{idx}" for idx in range(len(chunks))]
         await self.vector_store.upsert_chunks(
             keys=keys,
@@ -64,8 +94,69 @@ class RagService:
             chunks_ingested=len(chunks),
         )
 
+    async def fetch_textract_text(self, job_id: str) -> str:
+        """Retrieve completed Textract results in a single pass (no polling).
+
+        Paginates through all result pages, collects LINE-type blocks, and
+        returns their text joined by newlines.  Raises ``ValueError`` if the
+        job did not SUCCEED.
+        """
+        from anyio import to_thread
+
+        if not self.textract_client:
+            raise ValueError(
+                "textract_client must be configured to fetch Textract text"
+            )
+
+        blocks: list[dict] = []
+        next_token: str | None = None
+        first_page = True
+
+        while True:
+            kwargs: dict[str, Any] = {"JobId": job_id}
+            if next_token:
+                kwargs["NextToken"] = next_token
+
+            page_res = await to_thread.run_sync(
+                lambda: self.textract_client.get_document_text_detection(**kwargs)
+            )
+
+            if first_page:
+                job_status = page_res.get("JobStatus", "")
+                if job_status != "SUCCEEDED":
+                    raise ValueError(
+                        f"Textract job {job_id!r} did not succeed: status={job_status!r}, "
+                        f"message={page_res.get('StatusMessage', '')!r}"
+                    )
+                pages_count = page_res.get("DocumentMetadata", {}).get("Pages", 1)
+                logger.info(
+                    "fetch_textract_text job_id=%s pages=%d", job_id, pages_count
+                )
+                first_page = False
+
+            blocks.extend(page_res.get("Blocks", []))
+            next_token = page_res.get("NextToken")
+            if not next_token:
+                break
+
+        lines = [
+            block["Text"]
+            for block in blocks
+            if block.get("BlockType") == "LINE" and block.get("Text")
+        ]
+        logger.info(
+            "fetch_textract_text job_id=%s extracted %d lines", job_id, len(lines)
+        )
+        return "\n".join(lines)
+
     async def ingest_binary_document(
-        self, filename: str, data: bytes, mime_type: str, user_id: str, document_id: str | None = None, tags: list[str] | None = None
+        self,
+        filename: str,
+        data: bytes,
+        mime_type: str,
+        user_id: str,
+        document_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> RagIngestResult:
         import os
         import asyncio
@@ -73,7 +164,9 @@ class RagService:
         from uuid import uuid4
 
         if not self.s3_client or not self.s3_bucket_name or not self.textract_client:
-            raise ValueError("S3 and Textract clients must be configured to process binary documents")
+            raise ValueError(
+                "S3 and Textract clients must be configured to process binary documents"
+            )
 
         if not document_id:
             document_id = str(uuid4())
@@ -81,7 +174,12 @@ class RagService:
         s3_key = f"rag-raw-uploads/{user_id}/{document_id}{extension}"
 
         # 1. Upload raw binary to S3
-        logger.info("Uploading raw binary document filename=%s user_id=%s s3_key=%s", filename, user_id, s3_key)
+        logger.info(
+            "Uploading raw binary document filename=%s user_id=%s s3_key=%s",
+            filename,
+            user_id,
+            s3_key,
+        )
         await to_thread.run_sync(
             lambda: self.s3_client.put_object(
                 Bucket=self.s3_bucket_name,
@@ -110,7 +208,9 @@ class RagService:
             # 3. Poll for completion
             while True:
                 poll_res = await to_thread.run_sync(
-                    lambda: self.textract_client.get_document_text_detection(JobId=job_id)
+                    lambda: self.textract_client.get_document_text_detection(
+                        JobId=job_id
+                    )
                 )
                 status = poll_res["JobStatus"]
                 if status == "SUCCEEDED":
@@ -151,6 +251,7 @@ class RagService:
 
             # 5. Extract text lines grouped by page
             from collections import defaultdict
+
             lines_by_page = defaultdict(list)
             total_lines = 0
             total_chars = 0
@@ -162,7 +263,7 @@ class RagService:
                         lines_by_page[page].append(text)
                         total_lines += 1
                         total_chars += len(text)
-            
+
             logger.info(
                 "Extracted %d lines (%d chars) from %d pages in document=%s",
                 total_lines,

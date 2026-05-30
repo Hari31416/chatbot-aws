@@ -33,11 +33,16 @@ When a user interacts with the system, their requests traverse distinct pathways
 
 1. **Upload Initiation**: The client sends a multipart file upload to API Gateway.
 2. **Immediate Acknowledgment**: The backend FastAPI Lambda registers the document metadata in DynamoDB as `processing`, uploads the file bytes to the private **Amazon S3 bucket** under the `staging/` prefix, and immediately returns a `202 Accepted` response. (Note: standard REST requests utilize backend Clerk JWT token validation).
-3. **Event Notification**: S3 publishes an `ObjectCreated` event to the **Amazon SQS Ingestion Queue**.
-4. **Worker Activation**: The **Asynchronous Ingestion Worker Lambda** is triggered by SQS (`BatchSize: 1`, with `MaximumConcurrency: 2` and 20-second SQS long polling enabled to minimize background polling requests).
-5. **Text Extraction**: The worker downloads the file. If it's a binary (PDF/Image), it polls **AWS Textract** for layout-aware text detection; if it's text (TXT/MD), it decodes it directly.
-6. **Embeddings & Vector Indexing**: The text is chunked, converted to 768-dimensional dense vectors via Gemini embeddings, and indexed into the native **AWS S3 Vectors** store (`AWS::S3Vectors::Index`).
-7. **Status Update**: The worker updates the document status to `ready` (or `failed`) in DynamoDB and purges the temporary staging object from S3.
+3. **S3 Direct Notification**: S3 triggers **Lambda 1 (Ingestion Initializer)** directly via S3 Event Notifications (bypassing SQS at this stage to avoid circular dependencies and stay within SQS free limits).
+4. **Initializer Routing (Lambda 1)**:
+   - For **text files** (.txt, .md, UTF-8 decodable): Reads text and enqueues a message directly to **ProcessorQueue (SQS)**.
+   - For **binary files** (PDF, PNG, JPG, etc.): Copies the file to `rag-raw-uploads/` in S3, triggers an asynchronous **AWS Textract** detection job (passing a notification channel pointing to the SNS `TextractCompletionTopic`), and writes a temporary mapping to DynamoDB (`TEXTRACT#job_id`).
+5. **Textract to SNS / SQS**: Once Textract finishes OCR offline, it publishes a notification to the **SNS Textract Completion Topic**, which forwards it to the **SQS ProcessorQueue**.
+6. **Processor Trigger (Lambda 2)**: **Lambda 2 (Ingestion Processor)** is triggered by SQS (`BatchSize: 1`, `MaximumConcurrency: 2`, 20s long polling).
+7. **Extraction & Vector Indexing**:
+   - If from Textract: Lambda 2 fetches metadata from DynamoDB, retrieves Textract blocks via a single `GetDocumentTextDetection` call (no busy polling), and deletes the raw upload file from S3.
+   - If text: Lambda 2 reads and decodes the file from the staging S3 path.
+   - Both paths chunk the text, compute Gemini embeddings, index them in **AWS S3 Vectors**, update the DynamoDB document status to `ready`, and delete the staging S3 file.
 
 ### Flow C: Consolidated Queries and Mutations via GraphQL (`POST /graphql`)
 
@@ -53,21 +58,22 @@ When a user interacts with the system, their requests traverse distinct pathways
 
 Below is a deep-dive analysis of the 12 primary AWS services orchestrating this stack, balancing conceptual analogies with low-level template settings.
 
-| Service                          | Role in the Platform                                    | SAM Configuration & Execution Details                                                              | Cost-Saving / Free Tier Strategies                                                                                                                         |
-| :------------------------------- | :------------------------------------------------------ | :------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
-| **AWS Lambda**                   | Main compute engine for backend FastAPI and SQS Worker. | Graviton `arm64` runtime, Python 3.12, timeouts (30s API, 120s Worker), Memory (512MB).            | 1 Million free requests/month. Explicit 7-day log retention configured to avoid endless storage fees.                                                      |
-| **Amazon API Gateway v2**        | Edge gateway for transactional REST endpoints.          | HTTP API v2 with global CORS and backend application-level Clerk JWT verification.                 | 1 Million free requests/month. 70% cheaper than traditional REST APIs (v1). CORS handled at edge.                                                          |
-| **Lambda Function URLs (FURLs)** | High-speed route for real-time response streaming.      | `AuthType: NONE`, `InvokeMode: RESPONSE_STREAM`, custom FastAPI PyJWT middleware validation.       | Fully free; bypasses API Gateway's 30s timeout and response buffering limits entirely.                                                                     |
-| **AWS Lambda Web Adapter (LWA)** | Integrates standard ASGI servers inside Lambda.         | Layer `LambdaAdapterLayerArm64` wrapping `uvicorn` server listening on port 8080.                  | Brings Time-to-First-Byte (TTFB) down to ~250ms via HTTP chunked transfer encoding.                                                                        |
-| **Clerk Authentication**         | Secure SaaS user registration and session management.   | Clerk React SDK (`@clerk/react`) on frontend, PyJWT JWKS offline verification on backend.          | Fully serverless authentication. Bypasses AWS infrastructure, keeping code and auth configurations clean.                                                  |
-| **Amazon DynamoDB**              | Single-table NoSQL transaction storage.                 | Partition Key (`pk`), Sort Key (`sk`), `UserConversationsIndexV2` GSI, and automated native `ttl`. | Configured with **Pay-Per-Request (On-Demand) Billing** to ensure zero idle capacity costs. IndexV2 uses `INCLUDE` projection to minimize GSI write costs. |
-| **Amazon S3 (Private)**          | Private storage for uploads and vectors.                | Private access blocks, Lifecycle Rule (7-day temporary expiry), staging notification triggers.     | 5 GB free storage. Temporary uploads automatically purged to prevent long-term storage leakage.                                                            |
-| **Amazon S3 (Public)**           | Hosting static compiled client SPA assets.              | S3 Static Website Configuration with `index.html` fallback mapped to handle React SPA router.      | Pennies per month. Serves static bundles instantly. In production, front with CloudFront CDN.                                                              |
-| **AWS SSM Parameter Store**      | Encrypted storage of LLM provider keys.                 | SecureString references (`/chatbot/litellm_api_key`) decrypted at Lambda cold start via Boto3.     | Completely free for standard parameters (unlike AWS Secrets Manager which costs $0.40/secret/month).                                                       |
-| **Amazon CloudWatch Logs**       | Diagnostic log groups for debugging.                    | Configured as custom SAM resources bounded by explicit 7-day log retention limits.                 | Free tier includes 5 GB of log ingestion/storage. 7-day retention prevents runaway bills.                                                                  |
-| **Amazon S3 Vectors**            | Fully native serverless vector search database.         | Specialized `AWS::S3Vectors` bucket and similarity index containing dense 768-dim embeddings.      | Native AWS serverless vector database; scales to exactly zero. Bypasses running database clusters ($30-$100/month).                                        |
-| **AWS Textract**                 | Structural document layouts parsing.                    | Asymmetric layout and text extraction for multi-page documents (PDFs, TIFFs, PNGs).                | 1,000 pages free/month. Use standard text detection instead of expensive layout tables analysis.                                                           |
-| **Amazon SQS & DLQ**             | Asynchronous job buffer and retry engine.               | `IngestionQueue` visibility (180s), Redrive policy pointing to `IngestionDLQ` (14-day retention).  | 1 Million free messages/month. Configured with 20-second Long Polling and maximum concurrency limit of 2 to minimize idle polling API requests.            | .   |
+| Service                          | Role in the Platform                                                               | SAM Configuration & Execution Details                                                                                                    | Cost-Saving / Free Tier Strategies                                                                                                                    |
+| :------------------------------- | :--------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AWS Lambda**                   | Main compute engine for FastAPI, Initializer (Lambda 1), and Processor (Lambda 2). | Graviton `arm64` runtime, Python 3.12, timeouts (30s API/Initializer, 120s Processor), Memory (1024MB API/Processor, 512MB Initializer). | 1 Million free requests/month. Explicit 7-day log retention configured to avoid endless storage fees.                                                 |
+| **Amazon API Gateway v2**        | Edge gateway for transactional REST endpoints.                                     | HTTP API v2 with global CORS and backend application-level Clerk JWT verification.                                                       | 1 Million free requests/month. 70% cheaper than traditional REST APIs (v1). CORS handled at edge.                                                     |
+| **Lambda Function URLs (FURLs)** | High-speed route for real-time response streaming.                                 | `AuthType: NONE`, `InvokeMode: RESPONSE_STREAM`, custom FastAPI PyJWT middleware validation.                                             | Fully free; bypasses API Gateway's 30s timeout and response buffering limits entirely.                                                                |
+| **AWS Lambda Web Adapter (LWA)** | Integrates standard ASGI servers inside Lambda.                                    | Layer `LambdaAdapterLayerArm64` wrapping `uvicorn` server listening on port 8080.                                                        | Brings Time-to-First-Byte (TTFB) down to ~250ms via HTTP chunked transfer encoding.                                                                   |
+| **Clerk Authentication**         | Secure SaaS user registration and session management.                              | Clerk React SDK (`@clerk/react`) on frontend, PyJWT JWKS offline verification on backend.                                                | Fully serverless authentication. Bypasses AWS infrastructure, keeping code and auth configurations clean.                                             |
+| **Amazon DynamoDB**              | Single-table NoSQL transaction storage.                                            | Partition Key (`pk`), Sort Key (`sk`), `UserConversationsIndexV2` GSI, and automated native `ttl`.                                       | Configured with Low Provisioned Capacity (2 RCU / 2 WCU) to take advantage of DynamoDB's always-free tier (up to 25 RCU/WCU) while eliminating costs. |
+| **Amazon S3 (Private)**          | Private storage for uploads, staging, and vectors.                                 | Private access blocks, Lifecycle Rule (7-day temporary expiry), staging notification triggers.                                           | 5 GB free storage. Temporary uploads automatically purged to prevent long-term storage leakage.                                                       |
+| **Amazon S3 (Public)**           | Hosting static compiled client SPA assets.                                         | S3 Static Website Configuration with `index.html` fallback mapped to handle React SPA router.                                            | Pennies per month. Serves static bundles instantly. In production, front with CloudFront CDN.                                                         |
+| **AWS SSM Parameter Store**      | Encrypted storage of LLM provider keys.                                            | SecureString references (`/chatbot/litellm_api_key`) decrypted at Lambda cold start via Boto3.                                           | Completely free for standard parameters (unlike AWS Secrets Manager which costs $0.40/secret/month).                                                  |
+| **Amazon CloudWatch Logs**       | Diagnostic log groups for debugging.                                               | Configured as custom SAM resources bounded by explicit 7-day log retention limits.                                                       | Free tier includes 5 GB of log ingestion/storage. 7-day retention prevents runaway bills.                                                             |
+| **Amazon S3 Vectors**            | Fully native serverless vector search database.                                    | Specialized `AWS::S3Vectors` bucket and similarity index containing dense 768-dim embeddings.                                            | Native AWS serverless vector database; scales to exactly zero. Bypasses running database clusters ($30-$100/month).                                   |
+| **AWS Textract**                 | Structural document layouts parsing.                                               | Asymmetric layout and text extraction for multi-page documents (PDFs, TIFFs, PNGs).                                                      | 1,000 pages free/month. Use standard text detection instead of expensive layout tables analysis.                                                      |
+| **Amazon SNS**                   | Asynchronous completion notification channel.                                      | `TextractCompletionTopic` SNS topic; Textract publishes completion notifications here.                                                   | Fully serverless and highly scalable. Integrates natively with Textract and SQS with negligible costs.                                                |
+| **Amazon SQS & DLQ**             | Asynchronous job buffer and retry engine.                                          | `ProcessorQueue` visibility (180s), Redrive policy pointing to `ProcessorDLQ` (14-day retention).                                        | 1 Million free messages/month. Configured with 20-second Long Polling and maximum concurrency limit of 2 to minimize idle polling API requests.       |
 
 ---
 
@@ -92,12 +98,12 @@ Globals:
 - **Graviton arm64**: Compiles code for ARM architecture, resulting in a **20% cost reduction** and higher performance compared to x86.
 - **512 MB Memory**: Allocates enough memory to prevent CPU throttling during intense Python cold starts and Textract payload decoding.
 
-### 4.2 SQS & Worker Timeout Alignment
+### 4.2 SQS & Processor Timeout Alignment
 
 A critical serverless pattern is matching SQS visibility timeouts to Lambda execution limits:
 
-- **`ChatbotIngestionWorkerFunction` Timeout**: `120 seconds` (gives Textract and LiteLLM embeddings plenty of time to process large files).
-- **`IngestionQueue` VisibilityTimeout**: `180 seconds` (1.5x of the worker timeout).
+- **`ChatbotIngestionProcessorFunction` Timeout**: `120 seconds` (gives Textract results retrieval and LiteLLM/Gemini embeddings plenty of time to process large files).
+- **`ProcessorQueue` VisibilityTimeout**: `180 seconds` (1.5x of the processor timeout).
   > [!IMPORTANT]
   > If SQS visibility was set to less than 120s (e.g., 30s), SQS would assume the active worker died while processing a long PDF and release the message to a duplicate worker. This would trigger duplicate processing, race conditions in the S3 Vector index, and double LLM billing.
 
@@ -151,7 +157,8 @@ All persistent data is structured within a single DynamoDB table to bypass costl
 | Conversation Metadata  | CONV#<id>             | META                                  |
 | Conversation Messages  | CONV#<id>             | MSG#<timestamp>#<message_id>          |
 | Sliding Cache Context  | CONV#<id>             | CTX                                   |
-| RAG Document Catalog   | USER#<user_id>        | DOC#<document_id>                     |
+| RAG Document Catalog   | USER#<user_id>        | RAGDOC#<created_at>#<document_id>     |
+| Textract Job Mapping   | TEXTRACT#<job_id>     | JOB                                   |
 +------------------------+-----------------------+---------------------------------------+
 ```
 
@@ -168,12 +175,14 @@ The **AWS SAM CLI** emulates the CloudFormation ecosystem locally using Docker c
 ```mermaid
 graph TD
     Client["Client / curl / Postman"] -->|HTTP Requests| API["sam local start-api (Port 8080)"]
-    MockEvent["Mock SQS JSON Event"] -->|Direct Payload| Invoke["sam local invoke"]
+    MockS3Event["Mock S3 JSON Event"] -->|Direct Payload| InvokeInit["sam local invoke ChatbotIngestionInitializerFunction"]
+    MockSQSEvent["Mock SQS JSON Event"] -->|Direct Payload| InvokeProc["sam local invoke ChatbotIngestionProcessorFunction"]
 
     subgraph Docker["SAM Local Docker Containers"]
         API -->|Proxies to| LWA["Lambda Web Adapter (LWA)"]
         LWA -->|HTTP| FastAPI["FastAPI App (uvicorn)"]
-        Invoke -->|Runs Handler| Worker["SQS Ingestion Worker"]
+        InvokeInit -->|Runs Initializer| Initializer["Ingestion Initializer Lambda"]
+        InvokeProc -->|Runs Processor| Processor["Ingestion Processor Lambda"]
     end
 ```
 
@@ -213,7 +222,16 @@ Create an `env.json` file in your root to inject configurations into local conta
     "CLERK_AUTHORIZED_PARTIES": "https://chat.hari31416.in",
     "LOG_LEVEL": "DEBUG"
   },
-  "ChatbotIngestionWorkerFunction": {
+  "ChatbotIngestionInitializerFunction": {
+    "Environment": "dev",
+    "DYNAMODB_TABLE_NAME": "chatbot-table-dev",
+    "S3_BUCKET_NAME": "chatbot-uploads-dev",
+    "PROCESSOR_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123456789012/chatbot-processor-queue-dev",
+    "TEXTRACT_SNS_TOPIC_ARN": "arn:aws:sns:ap-south-1:123456789012:chatbot-textract-completion-dev",
+    "TEXTRACT_SNS_ROLE_ARN": "arn:aws:iam::123456789012:role/chatbot-textract-sns-role-dev",
+    "LOG_LEVEL": "DEBUG"
+  },
+  "ChatbotIngestionProcessorFunction": {
     "Environment": "dev",
     "DYNAMODB_TABLE_NAME": "chatbot-table-dev",
     "S3_BUCKET_NAME": "chatbot-uploads-dev",
@@ -236,26 +254,51 @@ sam local start-api --env-vars env.json --port 8080
 - Open Swagger Docs: `http://localhost:8080/docs`
 - Health check: `curl http://localhost:8080/health`
 
-#### 4. Invoke Worker with a Mock Event
+#### 4. Invoke Functions with Mock Events
 
-Create a mock event payload file `events/sqs-s3-event.json` containing an S3 staging file pointer:
+##### Option A: Test Initializer (S3 Event Trigger)
+
+Create a mock event payload file `events/s3-event.json`:
+
+```json
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": { "name": "chatbot-uploads-dev" },
+        "object": { "key": "staging/tester/doc123/sample_report.txt" }
+      }
+    }
+  ]
+}
+```
+
+Invoke the Initializer directly:
+
+```bash
+sam local invoke ChatbotIngestionInitializerFunction --event events/s3-event.json --env-vars env.json
+```
+
+##### Option B: Test Processor (SQS Message Trigger)
+
+Create a mock event payload file `events/sqs-processor-event.json` (direct text message example):
 
 ```json
 {
   "Records": [
     {
       "messageId": "msg-12345",
-      "body": "{\n  \"Records\": [\n    {\n      \"eventName\": \"ObjectCreated:Put\",\n      \"s3\": {\n        \"bucket\": { \"name\": \"chatbot-uploads-dev\" },\n        \"object\": { \"key\": \"staging/tester/doc123/sample_report.txt\" }\n      }\n    }\n  ]\n}",
+      "body": "{\n  \"source\": \"text\",\n  \"document_id\": \"doc123\",\n  \"user_id\": \"tester\",\n  \"filename\": \"sample_report.txt\",\n  \"s3_key\": \"staging/tester/doc123/sample_report.txt\"\n}",
       "eventSource": "aws:sqs"
     }
   ]
 }
 ```
 
-Invoke the worker container directly:
+Invoke the Processor directly:
 
 ```bash
-sam local invoke ChatbotIngestionWorkerFunction --event events/sqs-s3-event.json --env-vars env.json
+sam local invoke ChatbotIngestionProcessorFunction --event events/sqs-processor-event.json --env-vars env.json
 ```
 
 #### 5. Network Bridging to Local Databases
@@ -293,8 +336,8 @@ If running DynamoDB Local or Minio inside a custom docker-compose network (e.g. 
 - **S3 Vectors Approach**: Storing high-dimensional dense coordinate arrays in native **AWS S3 Vectors** indexes (`AWS::S3Vectors::Index`) scales to **exactly $0/month** when idle.
 - **Trade-off Decision**: AWS S3 Vectors was selected to maintain the platform's **100% serverless, zero-maintenance, and ultra-low-cost billing profile** while still delivering fast similarity search capabilities.
 
-### 7.3 Asynchronous Ingestion (SQS) vs. Synchronous API Imports
+### 7.3 Hybrid Asynchronous Ingestion Pipeline vs. Synchronous API Imports
 
 - **Synchronous Approach**: Parsing documents inside the `POST` handler blocks the thread, forcing the user's browser to wait up to minutes while Textract reads pages, LiteLLM generates embeddings, and the vector index updates. This is highly fragile and vulnerable to 30-second API timeouts.
-- **Asynchronous Approach (SQS)**: The upload API saves the file and returns instantly (`202 Accepted`). The SQS queue guarantees the processing job is saved and processed out-of-band by the Worker Lambda.
-- **Trade-off Decision**: The asynchronous queue-centric pipeline was selected to maximize **system reliability, UI responsiveness, and processing fault tolerance**.
+- **Hybrid Asynchronous Approach**: The upload API saves the file and returns instantly (`202 Accepted`). The S3 event notifies **Lambda 1 (Initializer)**, which routes it. Text files bypass OCR and go to SQS directly. Binary files trigger **Amazon Textract** asynchronously. Once Textract finishes, SNS publishes a completion message to the **SQS ProcessorQueue**, triggering **Lambda 2 (Processor)** to read the layout-aware text results and perform chunking/embeddings/indexing out-of-band.
+- **Trade-off Decision**: This hybrid two-lambda pipeline was selected to eliminate idle Lambda CPU waiting time during Textract OCR execution, stay within SQS free limits, prevent duplicate message deliveries, and maximize overall ingestion reliability.

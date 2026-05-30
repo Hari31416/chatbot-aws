@@ -219,12 +219,12 @@ if (health.status === "ok") {
 
 - **Trade-off:** Sequential loading increases page-load time by the sum of individual database calls (~100ms - 200ms total), but completely resolves concurrent cold starts by reusing the same warmed Lambda container.
 
-
 ---
 
 ## 7. Extended Schema (Mutations and Messages)
 
 The GraphQL schema has been extended beyond initial startup data to support all standard query/mutation operations of the application, eliminating the REST endpoints for:
+
 - Fetching messages for a specific conversation
 - Updating conversation names
 - Deleting conversations
@@ -234,15 +234,18 @@ The GraphQL schema has been extended beyond initial startup data to support all 
 Binary and streaming payloads (such as SSE token streaming `POST /chat/stream` and physical document uploads `POST /rag/ingest/file` / `POST /chat/image`) remain on REST for maximum streaming efficiency and standard multipart processing.
 
 ### Extended Types
+
 - `MessageItem` (with `AttachmentItem` and `CitationItem` lists)
 - `DeleteConversationPayload`
 - `DeleteRagDocumentPayload`
 - `IngestRagTextPayload`
 
 ### Queries
+
 - `conversationMessages(conversationId: String!)` -> Returns lists of messages.
 
 ### Mutations
+
 - `updateConversationName(conversationId: String!, name: String!)`
 - `deleteConversation(conversationId: String!)`
 - `deleteRagDocument(documentId: String!)`

@@ -377,3 +377,49 @@ class ConversationRepository:
             Key={"pk": target_item["pk"], "sk": target_item["sk"]}
         )
         return _decimal_to_float(target_item)
+
+    def save_textract_job(
+        self,
+        job_id: str,
+        document_id: str,
+        user_id: str,
+        filename: str,
+        s3_raw_key: str,
+        created_at: str,
+    ) -> None:
+        """Persist a Textract job → document mapping for Lambda 2 to look up on completion.
+
+        pk = ``TEXTRACT#{job_id}``, sk = ``JOB``.
+        A 48-hour TTL ensures stale records are auto-expired by DynamoDB.
+        """
+        import time
+
+        ttl = int(time.time()) + 48 * 3600
+        item = {
+            "pk": f"TEXTRACT#{job_id}",
+            "sk": "JOB",
+            "job_id": job_id,
+            "document_id": document_id,
+            "user_id": user_id,
+            "filename": filename,
+            "s3_raw_key": s3_raw_key,
+            "created_at": created_at,
+            "ttl": ttl,
+        }
+        logger.debug(
+            "save_textract_job job_id=%s document_id=%s user_id=%s",
+            job_id,
+            document_id,
+            user_id,
+        )
+        self._table.put_item(Item=_float_to_decimal(item))
+
+    def get_textract_job(self, job_id: str) -> dict | None:
+        """Retrieve the job mapping previously saved by ``save_textract_job``."""
+        logger.debug("get_textract_job job_id=%s", job_id)
+        response = self._table.get_item(
+            Key={"pk": f"TEXTRACT#{job_id}", "sk": "JOB"}
+        )
+        item = response.get("Item")
+        return _decimal_to_float(item) if item else None
+

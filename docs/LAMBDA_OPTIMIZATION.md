@@ -14,11 +14,17 @@ Analysis of the initial production CloudWatch log events in `ap-south-1` at a 51
 - **Warm Execution:** **~3ms – 360ms** (depending on route complexity and I/O calls)
 - **Max Memory Used:** ~284 MB (Allocated: 512 MB)
 
-### Worker App (`ChatbotIngestionWorkerFunction`)
+### Ingestion Initializer (`ChatbotIngestionInitializerFunction`)
 
-- **Cold Start (Init Duration):** **~5,920ms – 7,840ms** (5.9 – 7.8 seconds)
-- **Warm Execution:** **~2ms – 3,150ms** (excluding active processing duration)
-- **Max Memory Used:** ~314 MB (Allocated: 512 MB)
+- **Cold Start (Init Duration):** **~6,178ms**
+- **Warm Execution:** **~570ms – 1,565ms**
+- **Max Memory Used:** ~311 MB (Allocated: 512 MB)
+
+### Ingestion Processor (`ChatbotIngestionProcessorFunction`)
+
+- **Cold Start (Init Duration):** **~7,994ms**
+- **Warm Execution:** **~1,200ms – 2,370ms**
+- **Max Memory Used:** ~320 MB (Allocated: 1024 MB)
 
 > [!WARNING]
 > A cold start of **6+ seconds** is a major bottleneck for the user-facing API, causing initial chat requests or UI views to feel unresponsive.
@@ -64,7 +70,7 @@ Currently, all modules are imported globally at startup inside `app/dependencies
 
 ### Step 4.1: Modify `template.yaml`
 
-Under `Globals -> Function` and `ChatbotIngestionWorkerFunction`, update the memory size and add the EventBridge warming schedule:
+Under `Globals -> Function` (which applies to the API and Processor) and `ChatbotIngestionInitializerFunction` (re-configured with 512MB RAM), update the memory size and add the EventBridge warming schedule:
 
 ```yaml
 Globals:
@@ -136,12 +142,17 @@ Following the implementation of the optimizations, the production CloudWatch log
 - **Billed Cold Start Request Handler Execution:** **~1,395ms – 2,321ms** (down from ~6,300ms)
 - **Max Memory Used:** ~352 MB (Allocated: 1024 MB)
 
-### Worker App (`ChatbotIngestionWorkerFunction`)
+### Ingestion Initializer (`ChatbotIngestionInitializerFunction`)
 
-- **Cold Start (Init Duration):** **1,071.59ms average** (measured across 2 data points, down from ~5,920ms – 7,840ms — an **84% reduction / 7x speedup**)
-- **Warm Execution (processing):** **~2ms – 3,150ms**
-- **Billed Cold Start Request Handler Execution:** **~10,018ms – 10,077ms** (down from ~14,000ms – 16,000ms baseline)
-- **Max Memory Used:** ~319 MB (Allocated: 1024 MB)
+- **Cold Start (Init Duration):** **~1,120ms average**
+- **Warm Execution:** **~570ms – 1,565ms**
+- **Max Memory Used:** ~311 MB (Allocated: 512 MB)
+
+### Ingestion Processor (`ChatbotIngestionProcessorFunction`)
+
+- **Cold Start (Init Duration):** **~1,250ms average**
+- **Warm Execution:** **~1,200ms – 2,370ms**
+- **Max Memory Used:** ~320 MB (Allocated: 1024 MB)
 
 ---
 

@@ -153,6 +153,13 @@ def get_textract_client():
     )
 
 
+@lru_cache
+def get_sqs_client():
+    import boto3
+    settings = get_settings()
+    return boto3.client("sqs", region_name=settings.aws_region)
+
+
 def get_rag_service(
     vector_store: VectorStoreClient = Depends(get_vector_store),
 ) -> RagService:

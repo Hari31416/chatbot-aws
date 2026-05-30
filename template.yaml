@@ -68,7 +68,7 @@ Globals:
 
       Variables:
         DYNAMODB_TABLE_NAME: !Ref ChatbotTable
-        S3_BUCKET_NAME: !Ref ChatbotStorageBucket
+        S3_BUCKET_NAME: !Sub "chatbot-uploads-${AWS::AccountId}-${Environment}"
         LITELLM_MODEL: !Ref LiteLlmModel
         LITELLM_BASE_URL: !Ref LiteLlmBaseUrl
         LITELLM_VISION_MODEL: !Ref LiteLlmVisionModel
@@ -263,7 +263,10 @@ Resources:
   # -------------------------------------------------------------
   ChatbotStorageBucket:
     Type: AWS::S3::Bucket
-    DependsOn: IngestionQueuePolicy
+    # NotificationConfiguration references !GetAtt ChatbotIngestionInitializerFunction.Arn,
+    # so CloudFormation implicitly creates the function before the bucket.
+    # The function has NO reference back to this bucket (S3CrudPolicy uses !Sub literal),
+    # so there is NO circular dependency.
     Properties:
       BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
       PublicAccessBlockConfiguration:
@@ -278,14 +281,14 @@ Resources:
             Status: Enabled
             ExpirationInDays: 7
       NotificationConfiguration:
-        QueueConfigurations:
+        LambdaConfigurations:
           - Event: s3:ObjectCreated:*
             Filter:
               S3Key:
                 Rules:
                   - Name: prefix
                     Value: staging/
-            Queue: !GetAtt IngestionQueue.Arn
+            Function: !GetAtt ChatbotIngestionInitializerFunction.Arn
 
   # -------------------------------------------------------------
   # Amazon S3 Bucket for Static Frontend Website Hosting (Public S3 Website)
@@ -346,65 +349,162 @@ Resources:
           - "text"
 
   # -------------------------------------------------------------
-  # AWS SQS Queues for RAG Ingestion
+  # SNS Topic — Textract publishes completion notifications here
   # -------------------------------------------------------------
-  IngestionDLQ:
+  TextractCompletionTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub chatbot-textract-completion-${Environment}
+
+  # -------------------------------------------------------------
+  # IAM Role — allows Textract to publish to TextractCompletionTopic
+  # -------------------------------------------------------------
+  TextractSNSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub chatbot-textract-sns-role-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: textract.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TextractPublishToSNS
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref TextractCompletionTopic
+
+  # -------------------------------------------------------------
+  # SQS Dead-Letter Queue for Processor
+  # -------------------------------------------------------------
+  ProcessorDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub chatbot-ingestion-dlq-${Environment}
+      QueueName: !Sub chatbot-processor-dlq-${Environment}
       MessageRetentionPeriod: 1209600 # 14 days
 
-  IngestionQueue:
+  # -------------------------------------------------------------
+  # SQS Queue — receives Textract SNS notifications + direct text msgs
+  # -------------------------------------------------------------
+  ProcessorQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub chatbot-ingestion-queue-${Environment}
-      VisibilityTimeout: 180 # Must be >= Ingestion Worker Timeout (120s)
+      QueueName: !Sub chatbot-processor-queue-${Environment}
+      VisibilityTimeout: 180 # Must be >= Processor Lambda timeout (120s)
       ReceiveMessageWaitTimeSeconds: 20
       RedrivePolicy:
-        deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
-        maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
+        deadLetterTargetArn: !GetAtt ProcessorDLQ.Arn
+        maxReceiveCount: 3
 
-  IngestionQueuePolicy:
+  ProcessorQueuePolicy:
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
-        - !Ref IngestionQueue
+        - !Ref ProcessorQueue
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowS3ToSendMessage
+          - Sid: AllowSNSToSendMessage
             Effect: Allow
             Principal:
-              Service: s3.amazonaws.com
+              Service: sns.amazonaws.com
             Action: sqs:SendMessage
-            Resource: !GetAtt IngestionQueue.Arn
+            Resource: !GetAtt ProcessorQueue.Arn
             Condition:
-              ArnLike:
-                aws:SourceArn: !Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"
-              StringEquals:
-                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Ref TextractCompletionTopic
+
+  TextractTopicProcessorQueueSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref TextractCompletionTopic
+      Protocol: sqs
+      Endpoint: !GetAtt ProcessorQueue.Arn
+      RawMessageDelivery: false # keep SNS envelope so processor can detect source
 
   # -------------------------------------------------------------
-  # Ingestion Worker Lambda Function
+  # Lambda 1 — Ingestion Initializer (triggered directly by S3)
   # -------------------------------------------------------------
-  ChatbotIngestionWorkerFunction:
+  ChatbotIngestionInitializerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ./backend
-      Handler: app.worker.handler
-      Timeout: 120
-      MemorySize: 1024
+      Handler: app.worker_initializer.handler
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          PROCESSOR_QUEUE_URL: !Ref ProcessorQueue
+          TEXTRACT_SNS_ROLE_ARN: !GetAtt TextractSNSRole.Arn
+          TEXTRACT_SNS_TOPIC_ARN: !Ref TextractCompletionTopic
       Policies:
-        - SQSPollerPolicy:
-            QueueName: !GetAtt IngestionQueue.QueueName
         - S3CrudPolicy:
             BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
         - DynamoDBCrudPolicy:
             TableName: !Ref ChatbotTable
         - SSMParameterReadPolicy:
-            ParameterName: chatbot/litellm_api_key
-        - SSMParameterReadPolicy:
-            ParameterName: chatbot/litellm_vision_api_key
+            ParameterName: chatbot/litellm_embedding_api_key
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:StartDocumentTextDetection
+              Resource: "*" # Textract does not support resource-level ARNs
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource: !GetAtt TextractSNSRole.Arn
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt ProcessorQueue.Arn
+      # No Events block here — S3 notification is configured manually on ChatbotStorageBucket
+      # to avoid the SAM Type:S3 circular dependency (bucket ↔ function).
+
+  # Lambda permission allowing S3 to invoke the Initializer.
+  # SourceArn uses !Sub literal — does NOT reference !Ref ChatbotStorageBucket,
+  # which is what breaks the cycle.
+  ChatbotIngestionInitializerFunctionS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ChatbotIngestionInitializerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"
+
+  ChatbotIngestionInitializerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ChatbotIngestionInitializerFunction}
+      RetentionInDays: 7
+
+  # -------------------------------------------------------------
+  # Lambda 2 — Ingestion Processor (triggered by ProcessorQueue)
+  # -------------------------------------------------------------
+  ChatbotIngestionProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./backend
+      Handler: app.worker_processor.handler
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          PROCESSOR_QUEUE_URL: !Ref ProcessorQueue
+          TEXTRACT_SNS_ROLE_ARN: !GetAtt TextractSNSRole.Arn
+          TEXTRACT_SNS_TOPIC_ARN: !Ref TextractCompletionTopic
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt ProcessorQueue.QueueName
+        - S3CrudPolicy:
+            BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ChatbotTable
         - SSMParameterReadPolicy:
             ParameterName: chatbot/litellm_embedding_api_key
         - Statement:
@@ -422,23 +522,21 @@ Resources:
               Resource: "*"
             - Effect: Allow
               Action:
-                - textract:DetectDocumentText
-                - textract:StartDocumentTextDetection
                 - textract:GetDocumentTextDetection
               Resource: "*"
       Events:
         SQSTrigger:
           Type: SQS
           Properties:
-            Queue: !GetAtt IngestionQueue.Arn
-            BatchSize: 1 # Process one file at a time
+            Queue: !GetAtt ProcessorQueue.Arn
+            BatchSize: 1
             ScalingConfig:
               MaximumConcurrency: 2
 
-  ChatbotIngestionWorkerFunctionLogGroup:
+  ChatbotIngestionProcessorFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/${ChatbotIngestionWorkerFunction}
+      LogGroupName: !Sub /aws/lambda/${ChatbotIngestionProcessorFunction}
       RetentionInDays: 7
 
   TableReadCapacityScalableTarget:
@@ -534,4 +632,3 @@ Outputs:
   FrontendBucket:
     Description: "S3 Bucket Name for the Frontend Website"
     Value: !Ref ChatbotFrontendBucket
-

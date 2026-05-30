@@ -9,22 +9,25 @@ This guide provides comprehensive instructions on how to run, test, and debug yo
 AWS SAM CLI offers several commands to emulate AWS serverless services locally:
 
 1. **`sam local start-api`**: Spawns a local HTTP server hosting your FastAPI application via API Gateway HTTP API emulation.
-2. **`sam local invoke`**: Executes a one-off invocation of a specific Lambda function (such as your SQS Ingestion Worker) with a mock event payload.
+2. **`sam local invoke`**: Executes a one-off invocation of a specific Lambda function (such as the Ingestion Initializer or Ingestion Processor) with a mock event payload.
 3. **`sam local start-lambda`**: Establishes a local endpoint mimicking the AWS Lambda Service, allowing programmatic invocation via `boto3` or other AWS SDKs.
 
 ```mermaid
 graph TD
     Client["Client / curl / Postman"]
-    SQSEvent["Mock SQS JSON Event"]
+    MockS3Event["Mock S3 Event"]
+    MockSQSEvent["Mock SQS Event"]
 
     subgraph SAMLocal["AWS SAM Local Emulation (Docker)"]
         API["sam local start-api (Port 8080)"]
-        Invoke["sam local invoke"]
+        InvokeInit["sam local invoke ChatbotIngestionInitializerFunction"]
+        InvokeProc["sam local invoke ChatbotIngestionProcessorFunction"]
 
         subgraph Containers["Lambda Execution Container"]
             LWA["Lambda Web Adapter (LWA)"]
             FastAPI["FastAPI App (uvicorn)"]
-            Worker["SQS Ingestion Worker"]
+            Initializer["Ingestion Initializer"]
+            Processor["Ingestion Processor"]
         end
     end
 
@@ -32,8 +35,11 @@ graph TD
     API -->|Proxies to| LWA
     LWA -->|HTTP| FastAPI
 
-    SQSEvent -->|Direct Payload| Invoke
-    Invoke -->|Runs Handler| Worker
+    MockS3Event -->|Direct Payload| InvokeInit
+    InvokeInit -->|Runs Initializer| Initializer
+
+    MockSQSEvent -->|Direct Payload| InvokeProc
+    InvokeProc -->|Runs Processor| Processor
 ```
 
 ---
@@ -97,7 +103,16 @@ Create a file named `env.json` in the root of your project:
     "CLERK_AUTHORIZED_PARTIES": "https://chat.hari31416.in",
     "LOG_LEVEL": "DEBUG"
   },
-  "ChatbotIngestionWorkerFunction": {
+  "ChatbotIngestionInitializerFunction": {
+    "Environment": "dev",
+    "DYNAMODB_TABLE_NAME": "chatbot-table-dev",
+    "S3_BUCKET_NAME": "chatbot-uploads-dev",
+    "PROCESSOR_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123456789012/chatbot-processor-queue-dev",
+    "TEXTRACT_SNS_TOPIC_ARN": "arn:aws:sns:ap-south-1:123456789012:chatbot-textract-completion-dev",
+    "TEXTRACT_SNS_ROLE_ARN": "arn:aws:iam::123456789012:role/chatbot-textract-sns-role-dev",
+    "LOG_LEVEL": "DEBUG"
+  },
+  "ChatbotIngestionProcessorFunction": {
     "Environment": "dev",
     "DYNAMODB_TABLE_NAME": "chatbot-table-dev",
     "S3_BUCKET_NAME": "chatbot-uploads-dev",
@@ -139,13 +154,50 @@ sam local start-api --env-vars env.json --port 8080
 
 ---
 
-### 4. Testing the SQS Background Ingestion Worker (`sam local invoke`)
+### 4. Testing the Ingestion Initializer & Processor (`sam local invoke`)
 
-The `ChatbotIngestionWorkerFunction` consumes messages containing S3 Event Notifications. You can invoke it directly by passing a mock SQS event payload.
+With the two-lambda hybrid architecture, you can test both functions independently:
 
-#### Step A: Generate a Mock Event Payload
+#### 4.1 Testing Ingestion Initializer (Lambda 1 — S3 Event)
 
-Save the following SQS payload as `events/sqs-s3-event.json` (create the `events` directory if it does not exist):
+##### Step A: Generate a Mock S3 Event Payload
+
+Save the following as `events/s3-event.json`:
+
+```json
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "chatbot-uploads-dev"
+        },
+        "object": {
+          "key": "staging/tester/doc123/sample_report.txt"
+        }
+      }
+    }
+  ]
+}
+```
+
+##### Step B: Invoke the Initializer
+
+```bash
+sam local invoke ChatbotIngestionInitializerFunction \
+  --event events/s3-event.json \
+  --env-vars env.json
+```
+
+SAM will invoke `app.worker_initializer.handler`, which parses the S3 metadata, updates the document status to `processing`, and enqueues a text ingestion payload to the `ProcessorQueue` SQS.
+
+---
+
+#### 4.2 Testing Ingestion Processor (Lambda 2 — SQS Event)
+
+##### Step A: Generate a Mock SQS Event Payload
+
+Save the following direct text payload as `events/sqs-processor-event.json`:
 
 ```json
 {
@@ -153,30 +205,22 @@ Save the following SQS payload as `events/sqs-s3-event.json` (create the `events
     {
       "messageId": "19dd0b1e-9b69-4e1b-a0cc-de5d1947b415",
       "receiptHandle": "MessageReceiptHandle",
-      "body": "{\n  \"Records\": [\n    {\n      \"eventVersion\": \"2.1\",\n      \"eventSource\": \"aws:s3\",\n      \"awsRegion\": \"ap-south-1\",\n      \"eventTime\": \"2026-05-26T10:00:00.000Z\",\n      \"eventName\": \"ObjectCreated:Put\",\n      \"s3\": {\n        \"s3SchemaVersion\": \"1.0\",\n        \"configurationId\": \"testConfigRule\",\n        \"bucket\": {\n          \"name\": \"chatbot-uploads-dev\",\n          \"arn\": \"arn:aws:s3:::chatbot-uploads-dev\"\n        },\n        \"object\": {\n          \"key\": \"staging/tester/doc123/sample_report.txt\",\n          \"size\": 1024,\n          \"eTag\": \"d41d8cd98f00b204e9800998ecf8427e\",\n          \"sequencer\": \"0055AED6DCD90281E5\"\n        }\n      }\n    }\n  ]\n}",
-      "eventSource": "aws:sqs",
-      "awsRegion": "ap-south-1"
+      "body": "{\n  \"source\": \"text\",\n  \"document_id\": \"doc123\",\n  \"user_id\": \"tester\",\n  \"filename\": \"sample_report.txt\",\n  \"s3_key\": \"staging/tester/doc123/sample_report.txt\"\n}",
+      "eventSource": "aws:sqs"
     }
   ]
 }
 ```
 
-#### Step B: Invoke the Ingestion Worker Lambda
-
-Execute the invocation:
+##### Step B: Invoke the Processor
 
 ```bash
-sam local invoke ChatbotIngestionWorkerFunction \
-  --event events/sqs-s3-event.json \
+sam local invoke ChatbotIngestionProcessorFunction \
+  --event events/sqs-processor-event.json \
   --env-vars env.json
 ```
 
-SAM will:
-
-1. Spin up the Lambda container.
-2. Direct the mock SQS message containing the S3 pointer to `app.worker.handler`.
-3. Read the mock file from the specified S3 bucket.
-4. Process embedding extraction, database status updates, and finally clean up the staging bucket file.
+SAM will invoke `app.worker_processor.handler`, which downloads the text file from the staging bucket path, runs semantic chunking and embedding, upserts embeddings to `AWS S3 Vectors`, updates the DynamoDB table status to `ready`, and deletes the staging file from S3.
 
 ---
 

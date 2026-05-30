@@ -108,6 +108,16 @@ class Settings(BaseSettings):
     rag_chunk_size: int = Field(default=800, validation_alias="RAG_CHUNK_SIZE")
     rag_chunk_overlap: int = Field(default=80, validation_alias="RAG_CHUNK_OVERLAP")
 
+    processor_queue_url: str | None = Field(
+        default=None, validation_alias="PROCESSOR_QUEUE_URL"
+    )
+    textract_sns_role_arn: str | None = Field(
+        default=None, validation_alias="TEXTRACT_SNS_ROLE_ARN"
+    )
+    textract_sns_topic_arn: str | None = Field(
+        default=None, validation_alias="TEXTRACT_SNS_TOPIC_ARN"
+    )
+
     @field_validator("allowed_image_mime_types", mode="before")
     @classmethod
     def _parse_mime_types(cls, value: object) -> list[str] | object:

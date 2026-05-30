@@ -15,8 +15,8 @@ The architecture separates standard transactional operations (user session routi
 3. **AWS Lambda Function URLs (FURL)** configured with **AWS Lambda Web Adapter (LWA)** and `RESPONSE_STREAM` invocation mode to deliver ultra-low Time-to-First-Byte (TTFB) token streaming from LiteLLM.
 4. **Amazon DynamoDB** with a single-table composite key layout and Global Secondary Index V2 (`UserConversationsIndexV2` with `INCLUDE` projection type) for highly efficient user conversation histories.
 5. **Amazon S3** for secure, private uploads alongside a public static S3 bucket for frontend React hosting.
-6. **Amazon SQS (Simple Queue Service)** with a Dead Letter Queue (DLQ) to decouple heavy RAG document ingestion flows, triggered via S3 Event Notifications under the `staging/` key prefix.
-7. **AWS Lambda Ingestion Worker Function** running asynchronously to parse files using AWS Textract, calculate vector embeddings using Gemini, index them in **AWS S3 Vectors** indexes, and update DynamoDB.
+6. **Amazon SQS & SNS** with a Dead Letter Queue (DLQ) to decouple and buffer the RAG document ingestion flows, avoiding long-running polling containers and staying within SQS free limits.
+7. **Hybrid Two-Lambda Ingestion Architecture**: Exposes an **Ingestion Initializer (Lambda 1)** triggered directly by S3 events to route files, and an **Ingestion Processor (Lambda 2)** triggered by the SQS queue (which processes messages forwarded from SNS or direct text messages) to chunk, embed, and index document data into **AWS S3 Vectors** indexes.
 
 ```mermaid
 graph TD
@@ -32,13 +32,22 @@ graph TD
 
     %% Asynchronous Ingestion Flow
     LambdaRest -->|1. Upload File /staging/| S3Uploads
-    S3Uploads -->|2. S3 ObjectCreated Event| SQS[Amazon SQS Ingestion Queue]
-    SQS -->|3. Trigger batch=1| Worker[Lambda Ingestion Worker]
-    Worker -->|4. Read Staging File| S3Uploads
-    Worker -->|5. Extract Text| Textract[AWS Textract]
-    Worker -->|6. Embed & Upsert| VS[(S3 Vectors Index)]
-    Worker -->|7. Update Document Status| DynamoDB
-    SQS -.->|Failure Redrive| DLQ[SQS Ingestion DLQ]
+    S3Uploads -->|2. S3 ObjectCreated Event| L1[Lambda 1: Initializer]
+
+    %% Binary path
+    L1 -->|3a. Copy file & Start Textract| Textract[AWS Textract]
+    L1 -->|3b. Save mapping| DynamoDB
+    Textract -->|4. Job Complete SNS Notification| SNS[SNS TextractTopic]
+    SNS -->|5. Forward message| SQS[SQS ProcessorQueue]
+
+    %% Text path
+    L1 -->|3c. Direct text payload| SQS
+
+    SQS -->|6. Trigger batch=1| L2[Lambda 2: Processor]
+    L2 -->|7. Fetch Text/Blocks| Textract
+    L2 -->|8. Embed & Upsert| VS[(S3 Vectors Index)]
+    L2 -->|9. Update Status to Ready| DynamoDB
+    SQS -.->|Failure Redrive| DLQ[SQS ProcessorDLQ]
 ```
 
 ### 1.1 How Key Services Work Under the Hood
@@ -703,91 +712,173 @@ ChatbotVectorIndex:
 
 ---
 
-## 12. AWS SQS Queues for RAG Ingestion
+## 12. AWS SQS & SNS for RAG Ingestion
 
-Decoupling ingestion requires queues to buffer objects uploaded to S3 and process them asynchronously.
+Decoupling and routing document ingestion requires an SNS Topic for Textract completion notifications, an SQS Queue for message buffering, and a SQS Dead-Letter Queue (DLQ).
 
 ```yaml
-# Dead Letter Queue for failed ingestion runs
-IngestionDLQ:
+# SNS Topic — Textract publishes completion notifications here
+TextractCompletionTopic:
+  Type: AWS::SNS::Topic
+  Properties:
+    TopicName: !Sub chatbot-textract-completion-${Environment}
+
+# IAM Role — allows Textract to publish to TextractCompletionTopic
+TextractSNSRole:
+  Type: AWS::IAM::Role
+  Properties:
+    RoleName: !Sub chatbot-textract-sns-role-${Environment}
+    AssumeRolePolicyDocument:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service: textract.amazonaws.com
+          Action: sts:AssumeRole
+    Policies:
+      - PolicyName: TextractPublishToSNS
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref TextractCompletionTopic
+
+# SQS Dead-Letter Queue for Processor
+ProcessorDLQ:
   Type: AWS::SQS::Queue
   Properties:
-    QueueName: !Sub chatbot-ingestion-dlq-${Environment}
+    QueueName: !Sub chatbot-processor-dlq-${Environment}
     MessageRetentionPeriod: 1209600 # 14 days
 
-# Main Ingestion Queue
-IngestionQueue:
+# SQS Queue — receives Textract SNS notifications + direct text msgs
+ProcessorQueue:
   Type: AWS::SQS::Queue
   Properties:
-    QueueName: !Sub chatbot-ingestion-queue-${Environment}
-    VisibilityTimeout: 180 # Must be >= Ingestion Worker Timeout (120s)
-    ReceiveMessageWaitTimeSeconds: 20 # Enables 20-second long polling
+    QueueName: !Sub chatbot-processor-queue-${Environment}
+    VisibilityTimeout: 180 # Must be >= Processor Lambda timeout (120s)
+    ReceiveMessageWaitTimeSeconds: 20
     RedrivePolicy:
-      deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
-      maxReceiveCount: 3 # Retry failed messages 3 times before sending to DLQ
-```
+      deadLetterTargetArn: !GetAtt ProcessorDLQ.Arn
+      maxReceiveCount: 3
 
-### Explanation
-
-- **`IngestionDLQ`**: Standard SQS queue set up as a Dead Letter Queue.
-  - **`MessageRetentionPeriod: 1209600`** (14 days): Retains failed messages for two weeks (the maximum SQS allows), giving developers ample time to inspect, troubleshoot, and re-drive raw message payloads that failed processing.
-- **`IngestionQueue`**: The primary job buffer.
-  - **`VisibilityTimeout: 180`**: Crucial setting configured to **180 seconds**. When a worker Lambda polls a message, SQS hides the message from other workers. This timeout must exceed the processing Lambda's execution timeout (120s) with a margin of safety, ensuring a worker has enough time to complete the Textract parsing and RAG embedding before SQS assumes it failed and exposes the message to another worker.
-  - **`ReceiveMessageWaitTimeSeconds: 20`**: Enables 20-second **SQS Long Polling**. Rather than replying immediately when the queue is empty (short polling), SQS holds the polling connection open for up to 20 seconds. This reduces idle SQS API requests (and costs) by up to 90%, keeping the project comfortably within SQS free tier limits.
-  - **`RedrivePolicy`**: Re-routes messages to `IngestionDLQ` if they fail processing `3` times (`maxReceiveCount: 3`).
-
-```yaml
-IngestionQueuePolicy:
+ProcessorQueuePolicy:
   Type: AWS::SQS::QueuePolicy
   Properties:
     Queues:
-      - !Ref IngestionQueue
+      - !Ref ProcessorQueue
     PolicyDocument:
       Version: "2012-10-17"
       Statement:
-        - Sid: AllowS3ToSendMessage
+        - Sid: AllowSNSToSendMessage
           Effect: Allow
           Principal:
-            Service: s3.amazonaws.com
+            Service: sns.amazonaws.com
           Action: sqs:SendMessage
-          Resource: !GetAtt IngestionQueue.Arn
+          Resource: !GetAtt ProcessorQueue.Arn
           Condition:
-            ArnLike:
-              aws:SourceArn: !Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"
-            StringEquals:
-              aws:SourceAccount: !Ref AWS::AccountId
+            ArnEquals:
+              aws:SourceArn: !Ref TextractCompletionTopic
+
+TextractTopicProcessorQueueSubscription:
+  Type: AWS::SNS::Subscription
+  Properties:
+    TopicArn: !Ref TextractCompletionTopic
+    Protocol: sqs
+    Endpoint: !GetAtt ProcessorQueue.Arn
+    RawMessageDelivery: false # keep SNS envelope so processor can detect source
 ```
 
 ### Explanation
 
-- **`IngestionQueuePolicy`**: Standard Queue Policy that authorizes S3's service principal (`s3.amazonaws.com`) to call `sqs:SendMessage` on our queue.
-  - **`Condition`**: Strictly locks permissions using `SourceArn` matching our private uploads bucket name and `SourceAccount` matching the AWS Account ID. This prevents other S3 buckets in other AWS accounts from posting messages to our ingestion worker queue.
+- **`TextractCompletionTopic`**: Deploys an SNS Topic where Textract publishes notifications upon completing layout parsing jobs.
+- **`TextractSNSRole`**: An IAM role that permits the Amazon Textract service to assume it and publish messages to the SNS completion topic.
+- **`ProcessorDLQ`**: Dead Letter Queue retaining failed ingestion messages for 14 days for manual review.
+- **`ProcessorQueue`**: The primary ingestion job queue.
+  - **`VisibilityTimeout: 180`**: Crucial setting configured to **180 seconds**. Since the processor timeout is 120s, this visibility window gives the processor ample time to retrieve completed Textract results and generate embeddings before SQS makes the message visible to other worker invocations.
+  - **`ReceiveMessageWaitTimeSeconds: 20`**: Enables 20-second **SQS Long Polling**, reducing idle polling API request frequencies and saving cost.
+  - **`RawMessageDelivery: false`**: Preserves the SNS envelope layout during subscription routing, allowing the processor to unpack the JSON wrapper and dynamically detect the source (`"textract"` completions vs direct `"text"` payloads).
+- **`ProcessorQueuePolicy`**: Restricts queue message ingestion so only our specified SNS topic is authorized to write events, preventing spoofing.
 
 ---
 
-## 13. Ingestion Worker Lambda Function
+## 13. Ingestion Initializer & Processor Lambda Functions
 
-This worker process consumes messages from the SQS queue and handles the end-to-end extraction, chunking, embedding, vector database indexing, and DynamoDB status updates completely out-of-band.
+The ingestion system consists of two dedicated serverless Lambda functions executing standard, isolated roles.
 
 ```yaml
-ChatbotIngestionWorkerFunction:
+# Lambda 1 — Ingestion Initializer (triggered directly by S3)
+ChatbotIngestionInitializerFunction:
   Type: AWS::Serverless::Function
   Properties:
     CodeUri: ./backend
-    Handler: app.worker.handler
-    Timeout: 120
+    Handler: app.worker_initializer.handler
+    Timeout: 30
     MemorySize: 512
+    Environment:
+      Variables:
+        PROCESSOR_QUEUE_URL: !Ref ProcessorQueue
+        TEXTRACT_SNS_ROLE_ARN: !GetAtt TextractSNSRole.Arn
+        TEXTRACT_SNS_TOPIC_ARN: !Ref TextractCompletionTopic
     Policies:
-      - SQSPollerPolicy:
-          QueueName: !GetAtt IngestionQueue.QueueName
       - S3CrudPolicy:
           BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
       - DynamoDBCrudPolicy:
           TableName: !Ref ChatbotTable
       - SSMParameterReadPolicy:
-          ParameterName: chatbot/litellm_api_key
+          ParameterName: chatbot/litellm_embedding_api_key
+      - Statement:
+          - Effect: Allow
+            Action:
+              - textract:StartDocumentTextDetection
+            Resource: "*" # Textract does not support resource-level ARNs
+          - Effect: Allow
+            Action:
+              - iam:PassRole
+            Resource: !GetAtt TextractSNSRole.Arn
+          - Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt ProcessorQueue.Arn
+
+# Lambda permission allowing S3 to invoke the Initializer.
+ChatbotIngestionInitializerFunctionS3Permission:
+  Type: AWS::Lambda::Permission
+  Properties:
+    FunctionName: !GetAtt ChatbotIngestionInitializerFunction.Arn
+    Action: lambda:InvokeFunction
+    Principal: s3.amazonaws.com
+    SourceAccount: !Ref AWS::AccountId
+    SourceArn: !Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"
+
+ChatbotIngestionInitializerFunctionLogGroup:
+  Type: AWS::Logs::LogGroup
+  Properties:
+    LogGroupName: !Sub /aws/lambda/${ChatbotIngestionInitializerFunction}
+    RetentionInDays: 7
+
+# Lambda 2 — Ingestion Processor (triggered by ProcessorQueue)
+ChatbotIngestionProcessorFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    CodeUri: ./backend
+    Handler: app.worker_processor.handler
+    Timeout: 120
+    MemorySize: 1024
+    Environment:
+      Variables:
+        PROCESSOR_QUEUE_URL: !Ref ProcessorQueue
+        TEXTRACT_SNS_ROLE_ARN: !GetAtt TextractSNSRole.Arn
+        TEXTRACT_SNS_TOPIC_ARN: !Ref TextractCompletionTopic
+    Policies:
+      - SQSPollerPolicy:
+          QueueName: !GetAtt ProcessorQueue.QueueName
+      - S3CrudPolicy:
+          BucketName: !Sub chatbot-uploads-${AWS::AccountId}-${Environment}
+      - DynamoDBCrudPolicy:
+          TableName: !Ref ChatbotTable
       - SSMParameterReadPolicy:
-          ParameterName: chatbot/litellm_vision_api_key
+          ParameterName: chatbot/litellm_embedding_api_key
       - Statement:
           - Effect: Allow
             Action:
@@ -803,44 +894,34 @@ ChatbotIngestionWorkerFunction:
             Resource: "*"
           - Effect: Allow
             Action:
-              - textract:DetectDocumentText
-              - textract:StartDocumentTextDetection
               - textract:GetDocumentTextDetection
             Resource: "*"
     Events:
       SQSTrigger:
         Type: SQS
         Properties:
-          Queue: !GetAtt IngestionQueue.Arn
-          BatchSize: 1 # Process one file at a time
+          Queue: !GetAtt ProcessorQueue.Arn
+          BatchSize: 1
           ScalingConfig:
-            MaximumConcurrency: 2 # Limit concurrent SQS pollers
-```
+            MaximumConcurrency: 2
 
-### Explanation
-
-- **`Handler: app.worker.handler`**: Sets the entry point to the background worker module, which processes SQS records instead of serving ASGI HTTP routes.
-- **`Timeout: 120`**: Configures a generous 2-minute timeout to allow the execution context to download large files from S3, wait for Textract processing, split text chunks, generate embeddings, and upsert them.
-- **`Policies`**: Follows least-privilege security by granting:
-  - **`SQSPollerPolicy`**: Authorizes polling and deleting processed messages from `IngestionQueue`.
-  - **`S3CrudPolicy`**: Grants permission to fetch staging files and delete them after successful ingestion.
-  - **`DynamoDBCrudPolicy`**: Authorizes updating document registry status in the single DynamoDB table.
-  - **`s3vectors` and `textract` policies**: Grants scoped permissions to interact with the serverless S3 Vector database indexes (including vector insertions and deletions) and AWS Textract OCR services.
-- **`SQSTrigger`**: Maps the SQS event source.
-  - **`BatchSize: 1`**: Instructs Lambda to invoke the function with exactly one message at a time. This isolates failures (a toxic file won't fail an entire batch of uploads) and bounds memory footprint.
-  - **`ScalingConfig > MaximumConcurrency: 2`**: Restricts the maximum number of concurrent Lambda functions polling the queue to 2. This bounds the polling rate on empty queues, drastically reducing the monthly background SQS request count, and also protects downstream AI models (Gemini/LiteLLM/Textract) from rate-limit exhaustion.
-
-```yaml
-ChatbotIngestionWorkerFunctionLogGroup:
+ChatbotIngestionProcessorFunctionLogGroup:
   Type: AWS::Logs::LogGroup
   Properties:
-    LogGroupName: !Sub /aws/lambda/${ChatbotIngestionWorkerFunction}
+    LogGroupName: !Sub /aws/lambda/${ChatbotIngestionProcessorFunction}
     RetentionInDays: 7
 ```
 
 ### Explanation
 
-- **`ChatbotIngestionWorkerFunctionLogGroup`**: Explicitly caps worker logs retention to **7 days** to ensure diagnostic worker outputs do not quietly inflate CloudWatch storage costs.
+- **`ChatbotIngestionInitializerFunction`**: Exposes the routing Initializer. It processes direct S3 notifications rapidly (30s timeout, 512MB RAM).
+  - **Direct S3 Permission**: Uses `ChatbotIngestionInitializerFunctionS3Permission` which references the bucket name via a literal string substitution (`!Sub "arn:aws:s3:::chatbot-uploads-${AWS::AccountId}-${Environment}"`) instead of a resource reference `!Ref`. This breaks circular dependency chains in SAM.
+  - **`iam:PassRole`**: Allows the function to pass the Textract SNS execution role (`TextractSNSRole`) to the Textract service, enabling Textract to publish completed OCR logs to the SNS topic.
+- **`ChatbotIngestionProcessorFunction`**: The compute-heavy RAG processing engine.
+  - **`MemorySize: 1024`**: Configures a larger 1.0 GB RAM allocation to provide additional CPU power during embedding parsing and LiteLLM/Gemini API connections.
+  - **`textract:GetDocumentTextDetection`**: Grants permission to fetch the completed layout results.
+  - **`SQSTrigger` with `MaximumConcurrency: 2`**: Restricts the concurrent polling workers to 2, ensuring rate limits on Gemini/LiteLLM embedding models are respected and background API queries are kept cost-effective.
+- **Log Retention policies**: Both functions are backed by explicit `AWS::Logs::LogGroup` definitions capping log storage to 7 days, avoiding long-term storage fees.
 
 ---
 
@@ -899,9 +980,11 @@ This section provides a summary of all active AWS services utilized in the chatb
 | **Amazon S3 (Frontend Bucket)**       | Hosts Vite + React production build files natively as a static HTTP web site.                                    | Read publicly by web browsers to load the UI. The loaded React client submits prompt requests to API Gateway and Lambda Function URLs.                                                                          |
 | **AWS SSM Parameter Store**           | Secure configuration storage. KMS-encrypts sensitive LLM and vision API keys.                                    | Lambda execution role reads these parameters at container cold-start, fetching and decrypting keys for LiteLLM.                                                                                                 |
 | **Amazon CloudWatch Logs**            | Centralized application logging and diagnostic error monitoring.                                                 | Automatically captures stdout, debug records, and runtime exceptions from Lambda functions. Set to 7-day retention.                                                                                             |
-| **Amazon SQS (Simple Queue Service)** | Asymmetric decoupling queue that buffers staging document uploads.                                               | Receives event notifications from S3 when objects land under the `staging/` key prefix. Triggers the background worker function asynchronously. Redrives to DLQ on failure.                                     |
-| **AWS S3 Vectors Index**              | Serverless similarity search database storing dense coordinate chunk vectors.                                    | Declaratively configured (`AWS::S3Vectors` resources). Queried by backend for RAG retrieval and updated by worker function for indexing.                                                                        |
-| **AWS Lambda Ingestion Worker**       | Decoupled execution worker Lambda handling document text extraction and embedding vector RAG indexing.           | Triggered automatically by SQS queue events. Integrates with S3 for file reads/writes, Textract for OCR, S3 Vectors for indexing, and DynamoDB for status updates.                                              |
+| **Amazon SNS**                        | Decoupled messaging service distributing completion notifications from Textract.                                 | Textract publishes completion notifications to `TextractCompletionTopic` SNS topic, which routes them to `ProcessorQueue` SQS.                                                                                  |
+| **Amazon SQS (Simple Queue Service)** | Buffer queue that stores ingestion tasks for text files and Textract notifications.                              | Triggers the background Processor function (`ChatbotIngestionProcessorFunction`) asynchronously. Redrives to DLQ on failure.                                                                                    |
+| **AWS S3 Vectors Index**              | Serverless similarity search database storing dense coordinate chunk vectors.                                    | Declaratively configured (`AWS::S3Vectors` resources). Queried by processor for indexing and backend for RAG retrieval.                                                                                         |
+| **AWS Lambda Ingestion Initializer**  | Decoupled execution lambda invoked directly by S3 to route staging files.                                        | Triggers Textract detection for binary uploads and sends direct messages to SQS for text uploads. Writes TEXTRACT#job_id mapping to DynamoDB.                                                                   |
+| **AWS Lambda Ingestion Processor**    | Decoupled execution lambda triggered by SQS queue events to parse, chunk, embed, and index text/OCR documents.   | Fetches text outputs from Textract or staging S3, computes embeddings via LiteLLM/Gemini, and writes similarity indices to S3 Vectors. Updates DynamoDB.                                                        |
 
 ### Architectural Integration Map
 
@@ -909,35 +992,46 @@ The diagram below illustrates how requests flow dynamically through these servic
 
 ```
 [ STATIC SITE DELIVERY ]
-Browser ──(Loads Index/JS)──► S3 Frontend Bucket (Public Read)
+Browser --(Loads Index/JS)--> S3 Frontend Bucket (Public Read)
 
 [ SECURE USER REGISTRATION & AUTH ]
-Browser ──(SignUp/Login)────► Clerk Auth Service (JWT Token Returned)
+Browser --(SignUp/Login)--> Clerk Auth Service (JWT Token Returned)
 
 [ STANDARD TRANSACTIONAL ROUTE ]
-Browser ──(Header: JWT)─────► API Gateway ──► Lambda (Mangum/Clerk Validate) ──► DynamoDB Single-Table / S3 Private Uploads
+Browser --(Header: JWT)--> API Gateway --> Lambda (Backend - Mangum/Clerk Validate) --> DynamoDB Single-Table / S3 Private Uploads
 
 [ HIGH-SPEED CHUNK STREAMING ROUTE ]
-Browser ──(Header: JWT)─────► Lambda Function URL (Streaming) ──► Lambda (LWA/Clerk Validate) ──► LiteLLM / Gemini ──► DynamoDB Update
+Browser --(Header: JWT)--> Lambda Function URL (Streaming) --> Lambda (Backend - LWA/Clerk Validate) --> LiteLLM / Gemini --> DynamoDB Update
 
-[ DECOUPLED ASYNCHRONOUS DOCUMENT INGESTION ROUTE ]
-Browser ──(Header: JWT)─────► API Gateway ──► Lambda (Mangum/Clerk Validate) ──► Uploads to S3 (/staging/)
-                                                                                           │
+[ HYBRID ASYNCHRONOUS DOCUMENT INGESTION ROUTE ]
+Browser --(Header: JWT)--> API Gateway --> Lambda (Backend - Mangum/Clerk Validate) --> Uploads to S3 (/staging/)
+                                                                                           |
                                                                                     (S3 Notification)
-                                                                                           │
-                                                                                           ▼
-                                                                                   SQS Ingestion Queue
-                                                                                           │
-                                                                                     (SQS Trigger)
-                                                                                           │
-                                                                                           ▼
-                                                                               Lambda Ingestion Worker
-                                                                                           │
-                                                                           ┌───────────────┴───────────────┐
-                                                                           ▼                               ▼
-                                                                    AWS Textract OCR               S3 Vectors Index
-                                                                           │                               │
-                                                                           └───────────────┬───────────────┘
-                                                                                           ▼
-                                                                                    DynamoDB Status Update
+                                                                                           |
+                                                                                           v
+                                                                             Lambda Ingestion Initializer (L1)
+                                                                             +-------------+-------------+
+                                                                     (If Binary)                    (If Text)
+                                                                             |                           |
+                                                                             v                           |
+                                                                     AWS Textract OCR                    |
+                                                                             |                           |
+                                                                    (SNS Notification)                   |
+                                                                             |                           |
+                                                                             v                           v
+                                                                     SNS TextractTopic ----> SQS ProcessorQueue
+                                                                                                 |
+                                                                                           (SQS Trigger)
+                                                                                                 |
+                                                                                                 v
+                                                                                   Lambda Ingestion Processor (L2)
+                                                                                                 |
+                                                                                  +--------------+--------------+
+                                                                                  v                             v
+                                                                           Fetch OCR text               S3 Vectors Index
+                                                                                  |                             |
+                                                                                  +--------------+--------------+
+                                                                                                 |
+                                                                                                 v
+                                                                                      DynamoDB Status Update
 ```

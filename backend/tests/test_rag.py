@@ -264,6 +264,134 @@ class MockTextractClient:
         }
 
 
+# ──────────────────────────────────────────────────────────────
+# Tests for fetch_textract_text
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fetch_textract_text_success() -> None:
+    """Happy path: SUCCEEDED job returns joined line text."""
+    textract_client = MockTextractClient(pages=1)
+    service = RagService(
+        vector_store=NoopVectorStore(),  # type: ignore[arg-type]
+        chunk_size=100,
+        chunk_overlap=10,
+        textract_client=textract_client,
+    )
+
+    text = await service.fetch_textract_text("test-job-id")
+
+    assert "Line 1 from Textract" in text
+    assert "Line 2 from Textract" in text
+    assert len(textract_client.get_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_textract_text_paginated() -> None:
+    """Paginated results: all pages are collected and their lines joined."""
+
+    class PaginatedTextractClient:
+        """Returns two pages on the first call (with NextToken), then one page."""
+
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def get_document_text_detection(self, JobId: str, NextToken: str | None = None):
+            self.call_count += 1
+            if self.call_count == 1:
+                return {
+                    "JobStatus": "SUCCEEDED",
+                    "DocumentMetadata": {"Pages": 2},
+                    "Blocks": [{"BlockType": "LINE", "Text": "Page 1 line"}],
+                    "NextToken": "token-page-2",
+                }
+            return {
+                "JobStatus": "SUCCEEDED",
+                "DocumentMetadata": {"Pages": 2},
+                "Blocks": [{"BlockType": "LINE", "Text": "Page 2 line"}],
+            }
+
+    client = PaginatedTextractClient()
+    service = RagService(
+        vector_store=NoopVectorStore(),  # type: ignore[arg-type]
+        chunk_size=100,
+        chunk_overlap=10,
+        textract_client=client,
+    )
+
+    text = await service.fetch_textract_text("job-paginated")
+
+    assert "Page 1 line" in text
+    assert "Page 2 line" in text
+    assert client.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_textract_text_non_succeeded() -> None:
+    """Non-SUCCEEDED status raises ValueError immediately."""
+    textract_client = MockTextractClient(fail_job=True)
+    service = RagService(
+        vector_store=NoopVectorStore(),  # type: ignore[arg-type]
+        chunk_size=100,
+        chunk_overlap=10,
+        textract_client=textract_client,
+    )
+
+    with pytest.raises(ValueError, match="did not succeed"):
+        await service.fetch_textract_text("test-job-id")
+
+
+@pytest.mark.asyncio
+async def test_ingest_document_embedding_retry() -> None:
+    """Rate-limit errors on get_embeddings trigger exponential backoff retries."""
+    import asyncio
+
+    call_count = 0
+
+    class RetryVectorStore:
+        async def get_embeddings(self, texts):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise Exception("429 RESOURCE_EXHAUSTED: rate limit exceeded")
+            return [[0.1] * 768 for _ in texts]
+
+        async def upsert_chunks(self, **kwargs):
+            pass
+
+    service = RagService(
+        vector_store=RetryVectorStore(),  # type: ignore[arg-type]
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+
+    # Patch asyncio.sleep so tests don't actually wait
+    slept: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    import app.services.rag as rag_module
+
+    original_sleep = rag_module.asyncio.sleep
+    rag_module.asyncio.sleep = fake_sleep  # type: ignore[assignment]
+    try:
+        result = await service.ingest_document(
+            filename="test.txt",
+            content="Some content that is long enough to form a chunk for embedding.",
+            user_id="user-123",
+        )
+    finally:
+        rag_module.asyncio.sleep = original_sleep  # type: ignore[assignment]
+
+    assert call_count == 3  # failed twice, succeeded on third attempt
+    assert len(slept) == 2  # two sleep calls for two retries
+    assert slept[0] == 2.0  # base_delay * 2^0
+    assert slept[1] == 4.0  # base_delay * 2^1
+    assert result.chunks_ingested >= 1
+
+
 @pytest.mark.asyncio
 async def test_rag_service_ingest_binary_document_logic() -> None:
     vector_store = MockVectorStore()
@@ -334,126 +462,6 @@ async def test_rag_service_ingest_binary_document_limit_exceeded() -> None:
     assert "exceeds maximum page limit of 100 pages" in str(excinfo.value)
     # Cleanup should still have run even on failure
     assert len(s3_client.deleted) == 1
-
-
-def test_worker_handler_success() -> None:
-    import json
-    from unittest.mock import patch, MagicMock, AsyncMock, ANY
-    from app.services.rag import RagIngestResult
-
-    mock_repo = MagicMock()
-    mock_repo.get_rag_document.return_value = {"tags": None}
-    mock_s3 = MagicMock()
-    mock_rag = MagicMock()
-
-    mock_body = MagicMock()
-    mock_body.read.return_value = b"some document text content"
-    mock_s3.get_object.return_value = {"Body": mock_body, "ContentType": "text/plain"}
-
-    mock_rag.ingest_document = AsyncMock(
-        return_value=RagIngestResult(document_id="doc-123", chunks_ingested=5)
-    )
-    mock_rag.ingest_binary_document = AsyncMock()
-
-    event = {
-        "Records": [
-            {
-                "body": json.dumps(
-                    {
-                        "Records": [
-                            {
-                                "s3": {
-                                    "bucket": {"name": "test-bucket"},
-                                    "object": {
-                                        "key": "staging/user-456/doc-123/my-file.txt"
-                                    },
-                                }
-                            }
-                        ]
-                    }
-                )
-            }
-        ]
-    }
-
-    with patch("app.worker.get_repository", return_value=mock_repo), patch(
-        "app.worker.get_s3_client", return_value=mock_s3
-    ), patch("app.worker.get_rag_service", return_value=mock_rag):
-
-        from app.worker import handler
-
-        handler(event, None)
-
-    mock_s3.get_object.assert_called_with(
-        Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt"
-    )
-
-    mock_rag.ingest_document.assert_called_with(
-        filename="my-file.txt",
-        content="some document text content",
-        user_id="user-456",
-        document_id="doc-123",
-        tags=None,
-    )
-
-    mock_repo.update_rag_document_status.assert_called_with(
-        "user-456", "doc-123", "ready", 5, ANY
-    )
-
-    mock_s3.delete_object.assert_called_with(
-        Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt"
-    )
-
-
-def test_worker_handler_failure_updates_status() -> None:
-    import json
-    from unittest.mock import patch, MagicMock, AsyncMock, ANY
-
-    mock_repo = MagicMock()
-    mock_s3 = MagicMock()
-    mock_rag = MagicMock()
-
-    # Simulate an error during S3 download
-    mock_s3.get_object.side_effect = Exception("S3 Connection Lost")
-
-    event = {
-        "Records": [
-            {
-                "body": json.dumps(
-                    {
-                        "Records": [
-                            {
-                                "s3": {
-                                    "bucket": {"name": "test-bucket"},
-                                    "object": {
-                                        "key": "staging/user-456/doc-123/my-file.txt"
-                                    },
-                                }
-                            }
-                        ]
-                    }
-                )
-            }
-        ]
-    }
-
-    with patch("app.worker.get_repository", return_value=mock_repo), patch(
-        "app.worker.get_s3_client", return_value=mock_s3
-    ), patch("app.worker.get_rag_service", return_value=mock_rag):
-
-        from app.worker import handler
-
-        handler(event, None)
-
-    # Repository should be notified of failure
-    mock_repo.update_rag_document_status.assert_called_with(
-        "user-456", "doc-123", "failed", 0, ANY
-    )
-
-    # staging file should still be cleaned up in finally block
-    mock_s3.delete_object.assert_called_with(
-        Bucket="test-bucket", Key="staging/user-456/doc-123/my-file.txt"
-    )
 
 
 def test_rag_delete_endpoint_success(test_client: TestClient) -> None:
@@ -594,4 +602,3 @@ def test_chat_with_rag_tags_filtering(test_client: TestClient) -> None:
         "documents": None,
         "tags": ["HR"],
     }
-

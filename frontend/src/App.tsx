@@ -1,22 +1,7 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import type {
-  Message,
-  Conversation,
-  ActiveCitationInfo,
-  RagDocument,
-} from "./types";
-import { checkHealth, sendChatMessageStream } from "./services/api";
-import {
-  fetchInitialData,
-  fetchConversationMessagesGql,
-  deleteConversationGql,
-  updateConversationNameGql,
-} from "./services/graphql";
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/components/theme-provider";
 import { useAuth } from "@clerk/react";
-import { getCurrentSessionToken } from "./services/auth";
 import { AuthGate } from "./components/AuthGate";
 import { ClerkAuthSync } from "./components/ClerkAuthSync";
 import { Sidebar } from "./components/Sidebar";
@@ -26,6 +11,9 @@ import { SettingsModal } from "./components/SettingsModal";
 import { DocumentsModal } from "./components/DocumentsModal";
 import { CitationModal } from "./components/CitationModal";
 import { ConnectionScreen } from "./components/ConnectionScreen";
+import { useHealth } from "./hooks/useHealth";
+import { useChat } from "./hooks/useChat";
+import type { ActiveCitationInfo } from "./types";
 
 export function App() {
   const { toast } = useToast();
@@ -47,36 +35,9 @@ export function App() {
     [],
   );
 
-  // --- Configuration State ---
-  const [apiBaseUrl, setApiBaseUrl] = React.useState<string>(() => {
-    const isLocalhost =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1";
-    if (!isLocalhost && import.meta.env.VITE_API_BASE_URL) {
-      return import.meta.env.VITE_API_BASE_URL;
-    }
-    return (
-      localStorage.getItem("api_base_url") ||
-      import.meta.env.VITE_API_BASE_URL ||
-      "http://localhost:8080"
-    );
-  });
-
-  const [functionUrl, setFunctionUrl] = React.useState<string>(() => {
-    const isLocalhost =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1";
-    if (!isLocalhost && import.meta.env.VITE_FUNCTION_URL) {
-      return import.meta.env.VITE_FUNCTION_URL;
-    }
-    return (
-      localStorage.getItem("function_url") ||
-      import.meta.env.VITE_FUNCTION_URL ||
-      localStorage.getItem("api_base_url") ||
-      import.meta.env.VITE_API_BASE_URL ||
-      "http://localhost:8080"
-    );
-  });
+  React.useEffect(() => {
+    localStorage.setItem("user_id", userId);
+  }, [userId]);
 
   // --- UI Layout State ---
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(() => {
@@ -88,184 +49,59 @@ export function App() {
   const [activeCitation, setActiveCitation] =
     React.useState<ActiveCitationInfo | null>(null);
 
-  // --- Chat & Conversation State ---
-  const [conversations, setConversations] = React.useState<Conversation[]>(
-    () => {
-      const saved = localStorage.getItem("conversations");
-      return saved ? JSON.parse(saved) : [];
-    },
-  );
-  const [activeConversationId, setActiveConversationId] = React.useState<
-    string | null
-  >(() => {
-    return localStorage.getItem("active_conversation_id") || null;
-  });
-  const [messages, setMessages] = React.useState<Record<string, Message[]>>(
-    () => {
-      const saved = localStorage.getItem("messages_cache");
-      return saved ? JSON.parse(saved) : {};
-    },
-  );
-
-  const [inputText, setInputText] = React.useState("");
-  const [isStreaming, setIsStreaming] = React.useState(false);
-  const [selectedImages, setSelectedImages] = React.useState<File[]>([]);
-  const [imagePreviewUrls, setImagePreviewUrls] = React.useState<string[]>([]);
-  const [useRag, setUseRag] = React.useState(false);
-  const [ragDocumentsText, setRagDocumentsText] = React.useState("");
-  const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const messagesEndRef = React.useRef<HTMLDivElement>(null);
-
-  // --- API Health Status ---
-  // Deduplicate: if both URLs are identical, reuse the same query result to
-  // avoid two concurrent /health calls against the same endpoint.
-  const isSameUrl =
-    apiBaseUrl.replace(/\/$/, "") === functionUrl.replace(/\/$/, "");
+  // --- Custom Hooks for Health/Config & Chat Logic ---
+  const {
+    apiBaseUrl,
+    setApiBaseUrl,
+    functionUrl,
+    setFunctionUrl,
+    isBackendOnline,
+    recheckBackendHealth,
+    isCheckingHealth,
+    backendHealthStatus,
+    isFunctionOnline,
+    recheckFunctionHealth,
+    isCheckingFunction,
+    functionHealthStatus,
+  } = useHealth();
 
   const {
-    data: isBackendOnline,
-    refetch: recheckBackendHealth,
-    isFetching: isCheckingHealth,
-    status: backendHealthStatus,
-  } = useQuery({
-    queryKey: ["backendHealth", apiBaseUrl],
-    queryFn: () => checkHealth(apiBaseUrl),
-    refetchInterval: 30000,
+    conversations,
+    activeConversationId,
+    setActiveConversationId,
+    handleCreateConversation,
+    handleDeleteConversation,
+    handleUpdateConversationName,
+    selectedImages,
+    imagePreviewUrls,
+    fileInputRef,
+    handleImageChange,
+    handleRemoveImage,
+    inputText,
+    setInputText,
+    isStreaming,
+    useRag,
+    setUseRag,
+    ragDocumentsText,
+    setRagDocumentsText,
+    selectedTags,
+    setSelectedTags,
+    ragDocuments,
+    refetchRagDocuments,
+    messagesEndRef,
+    handleSendMessage,
+    activeMessages,
+  } = useChat({
+    apiBaseUrl,
+    functionUrl,
+    isLoggedIn,
+    userId,
   });
 
-  const {
-    data: isFunctionOnline,
-    refetch: recheckFunctionHealth,
-    isFetching: isCheckingFunction,
-    status: functionHealthStatus,
-  } = useQuery({
-    queryKey: ["functionHealth", functionUrl],
-    // When both URLs resolve to the same host, skip a redundant fetch and
-    // reuse the backend health result instead.
-    queryFn: () =>
-      isSameUrl
-        ? Promise.resolve(isBackendOnline ?? false)
-        : checkHealth(functionUrl),
-    refetchInterval: 30000,
-    enabled: !isSameUrl || backendHealthStatus !== "pending",
-  });
-
-  // --- Initial data: fetch health + conversations + ragDocuments in one GraphQL call ---
-  const [ragDocuments, setRagDocuments] = React.useState<RagDocument[]>([]);
-  const refetchRagDocuments = React.useCallback(async () => {
-    if (!apiBaseUrl || !isLoggedIn) return;
-    try {
-      const data = await fetchInitialData(apiBaseUrl);
-      setConversations(data.conversations);
-      setRagDocuments(data.ragDocuments);
-    } catch (err: unknown) {
-      console.error("Failed to refresh initial data:", err);
-    }
-  }, [apiBaseUrl, isLoggedIn]);
-
-  // --- Sync configs and sessions ---
-  React.useEffect(() => {
-    localStorage.setItem("api_base_url", apiBaseUrl);
-  }, [apiBaseUrl]);
-
-  React.useEffect(() => {
-    localStorage.setItem("function_url", functionUrl);
-  }, [functionUrl]);
-
-  React.useEffect(() => {
-    localStorage.setItem("user_id", userId);
-  }, [userId]);
-
-  React.useEffect(() => {
-    localStorage.setItem("conversations", JSON.stringify(conversations));
-  }, [conversations]);
-
-  React.useEffect(() => {
-    if (activeConversationId) {
-      localStorage.setItem("active_conversation_id", activeConversationId);
-    } else {
-      localStorage.removeItem("active_conversation_id");
-    }
-  }, [activeConversationId]);
-
+  // Reset active citation if the conversation changes
   React.useEffect(() => {
     setActiveCitation(null);
   }, [activeConversationId]);
-
-  React.useEffect(() => {
-    localStorage.setItem("messages_cache", JSON.stringify(messages));
-  }, [messages]);
-
-  // Fetch conversations + ragDocuments in a single GraphQL call on mount / login change
-  React.useEffect(() => {
-    if (!apiBaseUrl || !isLoggedIn) return;
-
-    let active = true;
-    async function loadInitialData() {
-      try {
-        const data = await fetchInitialData(apiBaseUrl);
-        if (active) {
-          setConversations(data.conversations);
-          setRagDocuments(data.ragDocuments);
-        }
-      } catch (err: unknown) {
-        console.error("Failed to fetch initial data via GraphQL:", err);
-      }
-    }
-    void loadInitialData();
-    return () => {
-      active = false;
-    };
-  }, [apiBaseUrl, isLoggedIn, userId]);
-
-  // Keep a ref to isStreaming so the messages effect can read the latest value
-  // without adding it to the dependency array (which would cause spurious re-fetches).
-  const isStreamingRef = React.useRef(isStreaming);
-  React.useEffect(() => {
-    isStreamingRef.current = isStreaming;
-  }, [isStreaming]);
-
-  // Fetch messages for active conversation from backend when activeConversationId changes.
-  React.useEffect(() => {
-    if (!activeConversationId || !apiBaseUrl || !isLoggedIn) return;
-
-    const convId = activeConversationId;
-
-    // Skip fetch for newly-created local conversations (no backend record yet).
-    const conv = conversations.find((c) => c.id === convId);
-    if (conv?.isLocal) return;
-
-    // Skip fetch while streaming is in-flight to avoid overwriting
-    // optimistic messages with stale data before the backend has persisted them.
-    if (isStreamingRef.current) return;
-
-    let active = true;
-    async function loadMessages() {
-      try {
-        const backendMessages = await fetchConversationMessagesGql(
-          convId,
-          apiBaseUrl,
-        );
-        if (active) {
-          setMessages((prev) => ({
-            ...prev,
-            [convId]: backendMessages,
-          }));
-        }
-      } catch (err: any) {
-        console.error(
-          `Failed to fetch messages for conversation ${convId}:`,
-          err,
-        );
-      }
-    }
-    loadMessages();
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId, apiBaseUrl, isLoggedIn]);
 
   // Automatic logout on unauthorized API errors (session expired)
   React.useEffect(() => {
@@ -284,7 +120,7 @@ export function App() {
     return () => {
       window.removeEventListener("unauthorized-api-error", handleUnauthorized);
     };
-  }, [toast, signOut]);
+  }, [toast, signOut, setActiveConversationId]);
 
   const handleLogout = () => {
     void signOut();
@@ -296,349 +132,6 @@ export function App() {
       type: "info",
     });
   };
-
-  // --- Message handlers ---
-
-  // --- Chat Handlers ---
-  const handleCreateConversation = () => {
-    const newId = Math.random().toString(36).substring(2, 9);
-    const newConv: Conversation = {
-      id: newId,
-      name: "New Chat...",
-      created_at: new Date().toISOString(),
-      user_id: userId,
-      isLocal: true,
-    };
-    setConversations((prev) => [newConv, ...prev]);
-    setActiveConversationId(newId);
-    setMessages((prev) => ({ ...prev, [newId]: [] }));
-  };
-
-  const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-
-    // Optimistic UI updates
-    setConversations((prev) => prev.filter((c) => c.id !== id));
-    setMessages((prev) => {
-      const copy = { ...prev };
-      delete copy[id];
-      return copy;
-    });
-    if (activeConversationId === id) {
-      setActiveConversationId(null);
-    }
-
-    // Backend deletion
-    deleteConversationGql(id, apiBaseUrl).catch((err) => {
-      console.error(`Failed to delete conversation ${id} from backend:`, err);
-      toast({
-        title: "Delete Failed",
-        description: "Could not delete conversation from server.",
-        type: "error",
-      });
-    });
-  };
-
-  const handleUpdateConversationName = (id: string, name: string) => {
-    const conv = conversations.find((c) => c.id === id);
-    if (!conv) return;
-
-    // Save original conversations for rollback
-    const originalConversations = conversations;
-
-    // Optimistic UI updates
-    setConversations((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, name } : c))
-    );
-
-    // If it's a local unsaved conversation, do not send update mutation
-    if (conv.isLocal) {
-      return;
-    }
-
-    // Call GraphQL mutation to persist changes
-    updateConversationNameGql(id, name, apiBaseUrl).catch((err) => {
-      console.error("Failed to update conversation name:", err);
-      toast({
-        title: "Rename Failed",
-        description: "Could not rename conversation on the server.",
-        type: "error",
-      });
-      // Revert optimistic updates
-      setConversations(originalConversations);
-    });
-  };
-
-
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const allowedTypes = ["image/png", "image/jpeg", "image/webp"];
-    const validFiles: File[] = [];
-    const validUrls: string[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.size > 5242880) {
-        toast({
-          title: "File Too Large",
-          description: `${file.name} exceeds the maximum 5 MB limit.`,
-          type: "error",
-        });
-        continue;
-      }
-      if (!allowedTypes.includes(file.type)) {
-        toast({
-          title: "Unsupported Format",
-          description: `${file.name} format is not supported (PNG, JPEG, and WebP are supported).`,
-          type: "error",
-        });
-        continue;
-      }
-      validFiles.push(file);
-      validUrls.push(URL.createObjectURL(file));
-    }
-
-    if (validFiles.length > 0) {
-      setSelectedImages((prev) => [...prev, ...validFiles]);
-      setImagePreviewUrls((prev) => [...prev, ...validUrls]);
-    }
-  };
-
-  const handleRemoveImage = (index?: number) => {
-    if (typeof index === "number") {
-      const urlToRevoke = imagePreviewUrls[index];
-      if (urlToRevoke) {
-        URL.revokeObjectURL(urlToRevoke);
-      }
-      setSelectedImages((prev) => prev.filter((_, i) => i !== index));
-      setImagePreviewUrls((prev) => prev.filter((_, i) => i !== index));
-    } else {
-      imagePreviewUrls.forEach((url) => URL.revokeObjectURL(url));
-      setSelectedImages([]);
-      setImagePreviewUrls([]);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    }
-  };
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim() && selectedImages.length === 0) return;
-
-    let base64Images: string[] | null = null;
-    if (selectedImages.length > 0) {
-      try {
-        base64Images = await Promise.all(
-          selectedImages.map((file) => {
-            return new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.readAsDataURL(file);
-              reader.onload = () => resolve(reader.result as string);
-              reader.onerror = (err) => reject(err);
-            });
-          }),
-        );
-      } catch (err: any) {
-        toast({
-          title: "Error processing image",
-          description: err.message || "Failed to read image files",
-          type: "error",
-        });
-        return;
-      }
-    }
-
-    let currentConvId = activeConversationId;
-    if (!currentConvId) {
-      const newId = Math.random().toString(36).substring(2, 9);
-      const newConv: Conversation = {
-        id: newId,
-        name: inputText.trim() ? inputText.trim().slice(0, 30) : "Image Chat",
-        created_at: new Date().toISOString(),
-        user_id: userId,
-      };
-      setConversations((prev) => [newConv, ...prev]);
-      setActiveConversationId(newId);
-      setMessages((prev) => ({ ...prev, [newId]: [] }));
-      currentConvId = newId;
-    }
-
-    const tempUserMsg: Message = {
-      id: "temp-user-msg",
-      role: "user",
-      content: inputText.trim(),
-      created_at: new Date().toISOString(),
-      attachment:
-        selectedImages.length > 0
-          ? {
-              s3_key: "",
-              mime_type: selectedImages[0].type,
-              size_bytes: selectedImages[0].size,
-              presigned_url: imagePreviewUrls[0],
-            }
-          : null,
-      attachments:
-        selectedImages.length > 0
-          ? selectedImages.map((img, i) => ({
-              s3_key: "",
-              mime_type: img.type,
-              size_bytes: img.size,
-              presigned_url: imagePreviewUrls[i],
-            }))
-          : null,
-    };
-
-    setMessages((prev) => {
-      const currentList = prev[currentConvId!] || [];
-      return {
-        ...prev,
-        [currentConvId!]: [...currentList, tempUserMsg],
-      };
-    });
-
-    const ragDocuments = ragDocumentsText
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    setIsStreaming(true);
-
-    const tempAssistantMsgId = "temp-assistant-msg";
-    const tempAssistantMsg: Message = {
-      id: tempAssistantMsgId,
-      role: "assistant",
-      content: "",
-      created_at: new Date().toISOString(),
-    };
-
-    setMessages((prev) => {
-      const currentList = prev[currentConvId!] || [];
-      return {
-        ...prev,
-        [currentConvId!]: [...currentList, tempAssistantMsg],
-      };
-    });
-
-    const token = await getCurrentSessionToken();
-    sendChatMessageStream(
-      inputText.trim(),
-      functionUrl || apiBaseUrl,
-      token,
-      currentConvId,
-      (chunkText, citations, finalContent) => {
-        setMessages((prev) => {
-          const currentList = prev[currentConvId!] || [];
-          return {
-            ...prev,
-            [currentConvId!]: currentList.map((m) => {
-              if (m.id === tempAssistantMsgId) {
-                let content = m.content + chunkText;
-                if (finalContent !== null && finalContent !== undefined) {
-                  content = finalContent;
-                }
-                return {
-                  ...m,
-                  content,
-                  citations: citations || m.citations,
-                };
-              }
-              return m;
-            }),
-          };
-        });
-      },
-      (finalConvId, assistantMsgId, userMsgId, citations) => {
-        setMessages((prev) => {
-          const currentList = prev[finalConvId] || [];
-          return {
-            ...prev,
-            [finalConvId]: currentList.map((m) => {
-              if (m.id === "temp-user-msg") {
-                return { ...m, id: userMsgId || m.id };
-              }
-              if (m.id === tempAssistantMsgId) {
-                return {
-                  ...m,
-                  id: assistantMsgId || m.id,
-                  citations: citations || m.citations,
-                };
-              }
-              return m;
-            }),
-          };
-        });
-
-        const newName = inputText.trim().slice(0, 30) || "New Chat...";
-        setConversations((prev) =>
-          prev.map((c) => {
-            if (c.id === currentConvId) {
-              return {
-                ...c,
-                id: finalConvId,
-                name: c.name === "New Chat..." ? newName : c.name,
-                isLocal: false,
-              };
-            }
-            return c;
-          }),
-        );
-
-        if (
-          activeConversationId === currentConvId &&
-          currentConvId !== finalConvId
-        ) {
-          setActiveConversationId(finalConvId);
-        }
-
-        setIsStreaming(false);
-      },
-      (errorMsg) => {
-        toast({
-          title: "Error streaming response",
-          description: errorMsg,
-          type: "error",
-        });
-
-        setMessages((prev) => {
-          const currentList = prev[currentConvId!] || [];
-          return {
-            ...prev,
-            [currentConvId!]: currentList.map((m) => {
-              if (m.id === "temp-user-msg") {
-                return { ...m, error: errorMsg };
-              }
-              if (m.id === tempAssistantMsgId) {
-                return { ...m, error: errorMsg };
-              }
-              return m;
-            }),
-          };
-        });
-
-        setIsStreaming(false);
-      },
-      {
-        use_rag: useRag,
-        rag_documents: ragDocuments.length > 0 ? ragDocuments : null,
-        rag_tags: selectedTags.length > 0 ? selectedTags : null,
-      },
-      base64Images,
-    );
-
-    setInputText("");
-    setSelectedImages([]);
-    setImagePreviewUrls([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const activeMessages = activeConversationId
-    ? messages[activeConversationId] || []
-    : [];
 
   if (!isClerkLoaded) {
     return (
@@ -710,7 +203,7 @@ export function App() {
             aria-label="Open sidebar"
           >
             <svg
-              xmlns="http://www.w3.org/2050/svg"
+              xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}

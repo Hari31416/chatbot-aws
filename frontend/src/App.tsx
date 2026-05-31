@@ -11,6 +11,7 @@ import {
   fetchInitialData,
   fetchConversationMessagesGql,
   deleteConversationGql,
+  updateConversationNameGql,
 } from "./services/graphql";
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/components/theme-provider";
@@ -338,6 +339,37 @@ export function App() {
     });
   };
 
+  const handleUpdateConversationName = (id: string, name: string) => {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) return;
+
+    // Save original conversations for rollback
+    const originalConversations = conversations;
+
+    // Optimistic UI updates
+    setConversations((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, name } : c))
+    );
+
+    // If it's a local unsaved conversation, do not send update mutation
+    if (conv.isLocal) {
+      return;
+    }
+
+    // Call GraphQL mutation to persist changes
+    updateConversationNameGql(id, name, apiBaseUrl).catch((err) => {
+      console.error("Failed to update conversation name:", err);
+      toast({
+        title: "Rename Failed",
+        description: "Could not rename conversation on the server.",
+        type: "error",
+      });
+      // Revert optimistic updates
+      setConversations(originalConversations);
+    });
+  };
+
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -660,6 +692,7 @@ export function App() {
         setActiveConversationId={setActiveConversationId}
         handleCreateConversation={handleCreateConversation}
         handleDeleteConversation={handleDeleteConversation}
+        handleUpdateConversationName={handleUpdateConversationName}
         userId={userId}
         theme={theme}
         setTheme={setTheme as any}

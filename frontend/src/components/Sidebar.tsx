@@ -9,6 +9,7 @@ interface SidebarProps {
   setActiveConversationId: (id: string | null) => void;
   handleCreateConversation: () => void;
   handleDeleteConversation: (id: string, e: React.MouseEvent) => void;
+  handleUpdateConversationName?: (id: string, name: string) => void;
   userId: string;
   theme: string;
   setTheme: (theme: "light" | "dark") => void;
@@ -24,6 +25,7 @@ export function Sidebar({
   setActiveConversationId,
   handleCreateConversation,
   handleDeleteConversation,
+  handleUpdateConversationName,
   userId,
   theme,
   setTheme,
@@ -31,6 +33,9 @@ export function Sidebar({
   onOpenDocuments,
 }: SidebarProps) {
   const [isEmailRevealed, setIsEmailRevealed] = React.useState(false);
+  const [editingConvId, setEditingConvId] = React.useState<string | null>(null);
+  const [editName, setEditName] = React.useState("");
+  const [deletingConvId, setDeletingConvId] = React.useState<string | null>(null);
 
   const garbleEmail = (email: string): string => {
     if (!email || email === "Guest") return email;
@@ -67,11 +72,11 @@ export function Sidebar({
           </span>
           <button
             onClick={() => setIsSidebarOpen(false)}
-            className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 dark:text-zinc-400 transition cursor-pointer block"
+            className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800/55 dark:text-zinc-400 transition cursor-pointer block"
             aria-label="Collapse sidebar"
           >
             <svg
-              xmlns="http://www.w3.org/2000/svg"
+              xmlns="http://www.w3.org/2050/svg"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
@@ -120,20 +125,102 @@ export function Sidebar({
             conversations.map((conv) => (
               <div
                 key={conv.id}
-                onClick={() => setActiveConversationId(conv.id)}
+                onClick={() => {
+                  if (editingConvId !== conv.id && deletingConvId !== conv.id) {
+                    setActiveConversationId(conv.id);
+                  }
+                }}
                 className={`group flex items-center justify-between rounded-lg px-3 py-2 cursor-pointer transition-all ${
                   activeConversationId === conv.id
                     ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium"
                     : "text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/55 hover:text-zinc-850 dark:hover:text-zinc-200"
                 }`}
               >
-                <span className="truncate text-sm">{conv.name}</span>
-                <button
-                  onClick={(e) => handleDeleteConversation(conv.id, e)}
-                  className="opacity-0 group-hover:opacity-100 hover:text-red-500 text-zinc-400 text-xs px-1 cursor-pointer transition-opacity"
-                >
-                  ✕
-                </button>
+                {editingConvId === conv.id ? (
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (editName.trim() && handleUpdateConversationName) {
+                          handleUpdateConversationName(conv.id, editName.trim());
+                        }
+                        setEditingConvId(null);
+                      } else if (e.key === "Escape") {
+                        setEditingConvId(null);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (
+                        editName.trim() &&
+                        handleUpdateConversationName &&
+                        editName.trim() !== conv.name
+                      ) {
+                        handleUpdateConversationName(conv.id, editName.trim());
+                      }
+                      setEditingConvId(null);
+                    }}
+                    className="flex-1 bg-transparent border-b border-blue-500 focus:outline-hidden text-sm py-0.5 text-zinc-900 dark:text-white"
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span className="truncate text-sm flex-1 mr-2">{conv.name}</span>
+                )}
+
+                {deletingConvId === conv.id ? (
+                  <div
+                    className="flex items-center gap-1.5 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteConversation(conv.id, e);
+                        setDeletingConvId(null);
+                      }}
+                      className="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer font-bold"
+                      title="Confirm Delete"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingConvId(null);
+                      }}
+                      className="text-zinc-400 hover:text-zinc-650 text-xs p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                      title="Cancel Delete"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : editingConvId === conv.id ? null : (
+                  <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingConvId(conv.id);
+                        setEditName(conv.name);
+                      }}
+                      className="hover:text-blue-500 text-zinc-400 dark:text-zinc-500 text-xs p-1 cursor-pointer"
+                      title="Rename Chat"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeletingConvId(conv.id);
+                        }}
+                        className="hover:text-red-500 text-zinc-400 dark:text-zinc-500 text-xs p-1 cursor-pointer"
+                        title="Delete Chat"
+                      >
+                        ✕
+                      </button>
+                  </div>
+                )}
               </div>
             ))
           )}

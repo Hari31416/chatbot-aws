@@ -75,7 +75,14 @@ class VectorStoreClient:
             return []
 
         if "gemini" in self.embedding_model.lower():
-            inputs = [f"task: sentence similarity | query: {text}" for text in cleaned]
+            inputs = [
+                (
+                    f"task: sentence similarity | query: {text}"
+                    if not text.startswith("data:")
+                    else text
+                )
+                for text in cleaned
+            ]
         else:
             inputs = cleaned
 
@@ -113,6 +120,7 @@ class VectorStoreClient:
         user_id: str,
         page_numbers: Sequence[int | None] | None = None,
         tags: list[str] | None = None,
+        custom_metadata: list[dict[str, Any]] | None = None,
     ) -> None:
         if not (len(keys) == len(texts) == len(embeddings)):
             raise ValueError("keys, texts, and embeddings must have matching lengths")
@@ -130,6 +138,8 @@ class VectorStoreClient:
                 metadata["page"] = page_numbers[idx]
             if tags:
                 metadata["tags"] = list(tags)
+            if custom_metadata and idx < len(custom_metadata) and custom_metadata[idx]:
+                metadata.update(custom_metadata[idx])
 
             vectors_payload.append(
                 {
@@ -202,15 +212,18 @@ class VectorStoreClient:
             distance = item.get("distance")
             metadata = item.get("metadata") or {}
             score = 0.0 if distance is None else max(0.0, 1.0 - float(distance))
-            results.append(
-                {
-                    "key": item.get("key"),
-                    "text": metadata.get("text", ""),
-                    "source": metadata.get("source_doc", "unknown"),
-                    "score": round(score, 4),
-                    "page": metadata.get("page"),
-                }
-            )
+            res = {
+                "key": item.get("key"),
+                "text": metadata.get("text", ""),
+                "source": metadata.get("source_doc", "unknown"),
+                "score": round(score, 4),
+                "page": metadata.get("page"),
+            }
+            if metadata.get("is_image"):
+                res["is_image"] = True
+                res["image_s3_key"] = metadata.get("image_s3_key")
+                res["mime_type"] = metadata.get("mime_type")
+            results.append(res)
         return results
 
 

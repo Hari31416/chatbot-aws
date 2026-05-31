@@ -35,7 +35,8 @@ if not logger.handlers:
     logger.addHandler(_sh)
     logger.setLevel(logging.INFO)
 
-_BINARY_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"})
+_BINARY_EXTENSIONS = frozenset({".pdf", ".tiff", ".tif"})
+_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
 
 def _parse_s3_key(s3_key: str) -> tuple[str, str, str] | None:
@@ -104,6 +105,52 @@ def _handle_binary(
         filename=filename,
         s3_raw_key=s3_raw_key,
         created_at=utcnow_iso(),
+    )
+
+
+def _handle_image(
+    bucket_name: str,
+    s3_key: str,
+    user_id: str,
+    document_id: str,
+    filename: str,
+) -> None:
+    """Copy staging file to rag-raw-uploads/, enqueue message to SQS."""
+    settings = get_settings()
+    s3 = get_s3_client()
+    sqs = get_sqs_client()
+
+    extension = os.path.splitext(filename.lower())[1] or ""
+    s3_raw_key = f"rag-raw-uploads/{user_id}/{document_id}{extension}"
+
+    # Copy staging → rag-raw-uploads
+    logger.info("Copying staging image to raw uploads: %s → %s", s3_key, s3_raw_key)
+    s3.copy_object(
+        Bucket=bucket_name,
+        CopySource={"Bucket": bucket_name, "Key": s3_key},
+        Key=s3_raw_key,
+    )
+
+    queue_url = settings.processor_queue_url
+    if not queue_url:
+        raise RuntimeError(
+            "PROCESSOR_QUEUE_URL is not configured — cannot enqueue image message"
+        )
+
+    payload = {
+        "source": "image",
+        "document_id": document_id,
+        "user_id": user_id,
+        "filename": filename,
+        "s3_raw_key": s3_raw_key,
+        "staging_key": s3_key,
+        "bucket_name": bucket_name,
+    }
+    sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(payload))
+    logger.info(
+        "Enqueued image message to ProcessorQueue: document_id=%s user_id=%s",
+        document_id,
+        user_id,
     )
 
 
@@ -181,9 +228,10 @@ def handler(event: dict, context: object) -> None:
         )
 
         extension = os.path.splitext(filename.lower())[1] or ""
+        is_image = extension in _IMAGE_EXTENSIONS
         is_binary = extension in _BINARY_EXTENSIONS
 
-        if not is_binary:
+        if not is_binary and not is_image:
             # Attempt to verify UTF-8 by downloading a small head of the file
             try:
                 s3 = get_s3_client()
@@ -205,7 +253,9 @@ def handler(event: dict, context: object) -> None:
                 )
 
         try:
-            if is_binary:
+            if is_image:
+                _handle_image(bucket_name, s3_key, user_id, document_id, filename)
+            elif is_binary:
                 _handle_binary(bucket_name, s3_key, user_id, document_id, filename)
             else:
                 _handle_text(bucket_name, s3_key, user_id, document_id, filename)

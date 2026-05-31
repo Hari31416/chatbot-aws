@@ -50,6 +50,11 @@ class StorageService:
         )
         logger.info("Raw bytes uploaded key=%s size_bytes=%d", key, len(data))
 
+    def download_bytes(self, key: str) -> bytes:
+        logger.debug("Downloading bytes key=%s", key)
+        response = self._s3.get_object(Bucket=self._bucket, Key=key)
+        return response["Body"].read()
+
     def generate_presigned_url(self, key: str, expiration_seconds: int = 3600) -> str:
         try:
             url = self._s3.generate_presigned_url(

@@ -336,3 +336,68 @@ class RagService:
                 break
             start += step
         return [chunk for chunk in chunks if chunk]
+
+    async def ingest_image_document(
+        self,
+        filename: str,
+        data: bytes,
+        mime_type: str,
+        user_id: str,
+        document_id: str,
+        image_s3_key: str,
+        tags: list[str] | None = None,
+    ) -> RagIngestResult:
+        import base64
+
+        base64_str = base64.b64encode(data).decode("utf-8")
+        data_uri = f"data:{mime_type};base64,{base64_str}"
+
+        # Exponential backoff retry around get_embeddings for rate-limit errors
+        max_retries = 5
+        base_delay = 2.0
+        for attempt in range(max_retries):
+            try:
+                embeddings = await self.vector_store.get_embeddings([data_uri])
+                break
+            except Exception as exc:
+                err_str = str(exc).lower()
+                is_rate_limit = any(
+                    kw in err_str
+                    for kw in ("rate", "429", "quota", "resource_exhausted")
+                )
+                if not is_rate_limit or attempt == max_retries - 1:
+                    raise
+                delay = base_delay * (2**attempt)
+                logger.warning(
+                    "Embedding rate-limit hit (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+
+        keys = [f"{document_id}#chunk-0"]
+        placeholder_text = f"[Image: {filename}]"
+
+        custom_metadata = [{
+            "is_image": True,
+            "image_s3_key": image_s3_key,
+            "mime_type": mime_type,
+        }]
+
+        await self.vector_store.upsert_chunks(
+            keys=keys,
+            texts=[placeholder_text],
+            embeddings=embeddings,
+            source_doc=filename,
+            document_id=document_id,
+            user_id=user_id,
+            tags=tags,
+            custom_metadata=custom_metadata,
+        )
+
+        return RagIngestResult(
+            document_id=document_id,
+            chunks_ingested=1,
+        )

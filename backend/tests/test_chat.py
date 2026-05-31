@@ -12,18 +12,26 @@ def test_chat_text(test_client: TestClient) -> None:
     assert payload["assistant_message_id"]
 
 
-def test_chat_image_upload(test_client: TestClient) -> None:
-    image_bytes = b"\x89PNG\r\n\x1a\n"
+def test_chat_image_payload(test_client: TestClient) -> None:
+    # Minimal 1x1 black PNG base64 string
+    image_b64 = "data:image/png;base64,iVBORw0KGgoAAAANSUHeHggAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
     response = test_client.post(
-        "/chat/image",
-        data={"message": "Describe this"},
-        files={"file": ("test.png", image_bytes, "image/png")},
+        "/chat",
+        json={"message": "Describe this", "images": [image_b64]},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["assistant_message"] == "stubbed response"
-    assert payload["attachment"]["mime_type"] == "image/png"
-    assert "http://mock-s3-presigned-url/" in payload["attachment"]["presigned_url"]
+
+    messages = getattr(test_client, "fake_repo").get_all_messages(
+        payload["conversation_id"]
+    )
+    assert len(messages) == 2  # user and assistant
+    user_msg = messages[0]
+    assert user_msg["role"] == "user"
+    assert len(user_msg["attachments"]) == 1
+    assert user_msg["attachments"][0]["mime_type"] == "image/png"
+    assert user_msg["attachments"][0]["size_bytes"] > 0
 
 
 def test_chat_error_handling(test_client: TestClient) -> None:
@@ -77,21 +85,28 @@ def test_chat_stream(test_client: TestClient) -> None:
     assert non_empty_lines[4] == "data: [DONE]"
 
 
-def test_chat_multi_image_upload(test_client: TestClient) -> None:
-    image_bytes = b"\x89PNG\r\n\x1a\n"
+def test_chat_stream_image_payload(test_client: TestClient) -> None:
+    image_b64 = "data:image/png;base64,iVBORw0KGgoAAAANSUHeHggAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
     response = test_client.post(
-        "/chat/image",
-        data={"message": "Describe these two images"},
-        files=[
-            ("files", ("image1.png", image_bytes, "image/png")),
-            ("files", ("image2.png", image_bytes, "image/png")),
-        ],
+        "/chat/stream",
+        json={"message": "Describe this stream", "images": [image_b64]},
     )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["assistant_message"] == "stubbed response"
-    assert len(payload["attachments"]) == 2
-    assert payload["attachments"][0]["mime_type"] == "image/png"
-    assert payload["attachments"][1]["mime_type"] == "image/png"
-    assert "http://mock-s3-presigned-url/" in payload["attachments"][0]["presigned_url"]
-    assert "http://mock-s3-presigned-url/" in payload["attachments"][1]["presigned_url"]
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+    lines = list(response.iter_lines())
+    non_empty_lines = [line for line in lines if line.strip()]
+    assert len(non_empty_lines) == 5
+
+    import json
+
+    chunk_1 = json.loads(non_empty_lines[0].replace("data: ", ""))
+    assert chunk_1["text"] == "stubbed"
+    conv_id = chunk_1["conversation_id"]
+
+    messages = getattr(test_client, "fake_repo").get_all_messages(conv_id)
+    assert len(messages) >= 1
+    user_msg = messages[0]
+    assert user_msg["role"] == "user"
+    assert len(user_msg["attachments"]) == 1
+    assert user_msg["attachments"][0]["mime_type"] == "image/png"

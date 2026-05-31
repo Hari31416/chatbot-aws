@@ -69,6 +69,21 @@ def build_rag_chat_messages(
     return messages
 
 
+def build_multimodal_rag_chat_messages(
+    payload_message: str,
+    history: Iterable[dict],
+    context: str,
+    image_data_urls: list[str],
+) -> list[dict]:
+    template = load_prompt("rag_chat.txt")
+    system_prompt = template.format(context=context)
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(build_history_messages(history))
+    user_content = build_user_content(payload_message, image_data_urls=image_data_urls)
+    messages.append({"role": "user", "content": user_content})
+    return messages
+
+
 def build_image_chat_messages(
     message: str | None,
     image_data_urls: list[str],

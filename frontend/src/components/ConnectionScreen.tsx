@@ -62,22 +62,29 @@ export function ConnectionScreen({
   return (
     <div className="flex min-h-screen w-screen items-center justify-center p-4 bg-zinc-50 dark:bg-zinc-950 transition-colors duration-300 font-sans">
       <div className="w-full max-w-md bg-white/70 dark:bg-zinc-900/70 border border-zinc-200/50 dark:border-zinc-800/50 backdrop-blur-md rounded-2xl shadow-xl p-6 md:p-8 flex flex-col items-center text-center transition-all duration-300">
-
         {/* Pulsing server status icon */}
         <div className="relative mb-6">
-          <div className={`absolute inset-0 rounded-full ${isAllOnline
-            ? "bg-emerald-500/10 dark:bg-emerald-500/5"
-            : isChecking
-              ? "bg-blue-500/10 dark:bg-blue-500/5 animate-pulse"
-              : "bg-red-500/10 dark:bg-red-500/5"
-            }`} />
-          <div className={`relative flex h-16 w-16 items-center justify-center rounded-full transition-colors duration-300 ${isAllOnline
-            ? "bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400"
-            : isChecking
-              ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-450"
-              : "bg-red-100 dark:bg-red-950/30 text-red-650 dark:text-red-400"
-            }`}>
-            <Server className={`h-8 w-8 ${isChecking ? "animate-pulse" : ""}`} />
+          <div
+            className={`absolute inset-0 rounded-full ${
+              isAllOnline
+                ? "bg-emerald-500/10 dark:bg-emerald-500/5"
+                : isChecking
+                  ? "bg-blue-500/10 dark:bg-blue-500/5 animate-pulse"
+                  : "bg-red-500/10 dark:bg-red-500/5"
+            }`}
+          />
+          <div
+            className={`relative flex h-16 w-16 items-center justify-center rounded-full transition-colors duration-300 ${
+              isAllOnline
+                ? "bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400"
+                : isChecking
+                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-450"
+                  : "bg-red-100 dark:bg-red-950/30 text-red-650 dark:text-red-400"
+            }`}
+          >
+            <Server
+              className={`h-8 w-8 ${isChecking ? "animate-pulse" : ""}`}
+            />
           </div>
         </div>
 

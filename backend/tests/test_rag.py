@@ -602,3 +602,102 @@ def test_chat_with_rag_tags_filtering(test_client: TestClient) -> None:
         "documents": None,
         "tags": ["HR"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ingest_image_document_success() -> None:
+    """ingest_image_document should base64 encode the image, call embeddings with data URI, and upsert chunk with custom metadata."""
+    from unittest.mock import AsyncMock, MagicMock
+    from app.services.rag import RagService
+
+    vector_store = MagicMock()
+    vector_store.get_embeddings = AsyncMock(return_value=[[0.5] * 768])
+    vector_store.upsert_chunks = AsyncMock()
+
+    service = RagService(
+        vector_store=vector_store,
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+
+    result = await service.ingest_image_document(
+        filename="test.png",
+        data=b"raw-image-bytes",
+        mime_type="image/png",
+        user_id="user-123",
+        document_id="doc-123",
+        image_s3_key="rag-raw-uploads/user-123/doc-123.png",
+        tags=["image", "test"],
+    )
+
+    assert result.chunks_ingested == 1
+    assert result.document_id == "doc-123"
+
+    vector_store.get_embeddings.assert_awaited_once()
+    called_uri = vector_store.get_embeddings.call_args[0][0][0]
+    assert called_uri.startswith("data:image/png;base64,")
+
+    vector_store.upsert_chunks.assert_awaited_once_with(
+        keys=["doc-123#chunk-0"],
+        texts=["[Image: test.png]"],
+        embeddings=[[0.5] * 768],
+        source_doc="test.png",
+        document_id="doc-123",
+        user_id="user-123",
+        tags=["image", "test"],
+        custom_metadata=[
+            {
+                "is_image": True,
+                "image_s3_key": "rag-raw-uploads/user-123/doc-123.png",
+                "mime_type": "image/png",
+            }
+        ],
+    )
+
+
+def test_chat_with_rag_image_retrieval(test_client: TestClient) -> None:
+    """When similarity search returns an image chunk, the endpoint fetches image from S3, swaps to vision LLM, and builds multimodal payload."""
+    fake_vector_store = getattr(test_client, "fake_vector_store")
+    fake_vector_store.results = [
+        {
+            "key": "photo#chunk-0",
+            "text": "[Image: chart.png]",
+            "source": "chart.png",
+            "score": 0.98,
+            "is_image": True,
+            "image_s3_key": "rag-raw-uploads/admin/doc-chart.png",
+            "mime_type": "image/png",
+        }
+    ]
+
+    from app.dependencies import get_storage
+
+    storage_override = test_client.app.dependency_overrides.get(get_storage)
+    if storage_override:
+        fake_storage = storage_override()
+        fake_storage.raw_uploads.append(
+            {
+                "key": "rag-raw-uploads/admin/doc-chart.png",
+                "data": b"mock-chart-bytes",
+                "mime_type": "image/png",
+            }
+        )
+
+    response = test_client.post(
+        "/chat",
+        json={
+            "message": "Explain this chart",
+            "use_rag": True,
+        },
+    )
+
+    assert response.status_code == 200
+    llm_messages = getattr(test_client, "fake_llm").messages[-1]
+
+    assert llm_messages[-1]["role"] == "user"
+    assert isinstance(llm_messages[-1]["content"], list)
+    assert llm_messages[-1]["content"][0]["text"] == "Explain this chart"
+    assert llm_messages[-1]["content"][1]["type"] == "image_url"
+    assert llm_messages[-1]["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )

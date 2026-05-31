@@ -139,6 +139,88 @@ async def _process_text_record(payload: dict) -> None:
     )
 
 
+async def _process_image_record(payload: dict) -> None:
+    """Handle a direct image file payload."""
+    import os
+    import mimetypes
+
+    document_id: str = payload["document_id"]
+    user_id: str = payload["user_id"]
+    filename: str = payload["filename"]
+    s3_raw_key: str = payload["s3_raw_key"]
+    staging_key: str = payload["staging_key"]
+    bucket_name: str = payload.get("bucket_name", "")
+
+    if not bucket_name:
+        bucket_name = get_settings().s3_bucket_name
+
+    logger.info(
+        "Processing image file document_id=%s user_id=%s s3_raw_key=%s staging_key=%s",
+        document_id,
+        user_id,
+        s3_raw_key,
+        staging_key,
+    )
+
+    s3 = get_s3_client()
+    response = s3.get_object(Bucket=bucket_name, Key=s3_raw_key)
+    data: bytes = response["Body"].read()
+
+    mime_type, _ = mimetypes.guess_type(filename)
+    if not mime_type:
+        ext = os.path.splitext(filename.lower())[1]
+        if ext == ".png":
+            mime_type = "image/png"
+        elif ext in {".jpg", ".jpeg"}:
+            mime_type = "image/jpeg"
+        elif ext == ".webp":
+            mime_type = "image/webp"
+        else:
+            mime_type = "application/octet-stream"
+
+    repo = get_repository()
+    rag_service = get_rag_service()
+
+    doc = repo.get_rag_document(user_id, document_id)
+    tags: list[str] | None = doc.get("tags") if doc else None
+
+    try:
+        result = await rag_service.ingest_image_document(
+            filename=filename,
+            data=data,
+            mime_type=mime_type,
+            user_id=user_id,
+            document_id=document_id,
+            tags=tags,
+            image_s3_key=s3_raw_key,
+        )
+        repo.update_rag_document_status(
+            user_id, document_id, "ready", result.chunks_ingested, utcnow_iso()
+        )
+        logger.info(
+            "Ingested image document_id=%s chunks=%d",
+            document_id,
+            result.chunks_ingested,
+        )
+    except Exception:
+        logger.exception("Image Ingestion failed for document_id=%s", document_id)
+        try:
+            repo.update_rag_document_status(
+                user_id, document_id, "failed", 0, utcnow_iso()
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write failure status for document_id=%s", document_id
+            )
+    finally:
+        if bucket_name and staging_key:
+            try:
+                s3.delete_object(Bucket=bucket_name, Key=staging_key)
+                logger.info("Deleted staging file: %s", staging_key)
+            except Exception:
+                logger.exception("Failed to delete staging file: %s", staging_key)
+
+
 async def _ingest_and_update(
     text: str,
     filename: str,
@@ -226,6 +308,8 @@ def handler(event: dict, context: object) -> None:
                 asyncio.run(_process_textract_record(payload))
             elif source == "text":
                 asyncio.run(_process_text_record(payload))
+            elif source == "image":
+                asyncio.run(_process_image_record(payload))
             else:
                 logger.warning("Unknown source %r in payload — skipping", source)
         except Exception:

@@ -29,32 +29,50 @@ function MessageContentRenderer({
   const markdownComponents = React.useMemo(
     () => ({
       h1: ({ children, ...props }: any) => (
-        <h1 className="text-xl font-bold mt-4 mb-2 text-zinc-900 dark:text-white" {...props}>
+        <h1
+          className="text-xl font-bold mt-4 mb-2 text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </h1>
       ),
       h2: ({ children, ...props }: any) => (
-        <h2 className="text-lg font-bold mt-3 mb-1.5 text-zinc-900 dark:text-white" {...props}>
+        <h2
+          className="text-lg font-bold mt-3 mb-1.5 text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </h2>
       ),
       h3: ({ children, ...props }: any) => (
-        <h3 className="text-base font-bold mt-2.5 mb-1 text-zinc-900 dark:text-white" {...props}>
+        <h3
+          className="text-base font-bold mt-2.5 mb-1 text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </h3>
       ),
       p: ({ children, ...props }: any) => (
-        <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed my-2" {...props}>
+        <p
+          className="text-zinc-700 dark:text-zinc-300 leading-relaxed my-2"
+          {...props}
+        >
           {children}
         </p>
       ),
       ul: ({ children, ...props }: any) => (
-        <ul className="list-disc pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300" {...props}>
+        <ul
+          className="list-disc pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300"
+          {...props}
+        >
           {children}
         </ul>
       ),
       ol: ({ children, ...props }: any) => (
-        <ol className="list-decimal pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300" {...props}>
+        <ol
+          className="list-decimal pl-5 my-2 space-y-1 text-zinc-700 dark:text-zinc-300"
+          {...props}
+        >
           {children}
         </ol>
       ),
@@ -64,7 +82,10 @@ function MessageContentRenderer({
         </li>
       ),
       strong: ({ children, ...props }: any) => (
-        <strong className="font-semibold text-zinc-900 dark:text-white" {...props}>
+        <strong
+          className="font-semibold text-zinc-900 dark:text-white"
+          {...props}
+        >
           {children}
         </strong>
       ),
@@ -109,39 +130,60 @@ function MessageContentRenderer({
         );
       },
       blockquote: ({ children, ...props }: any) => (
-        <blockquote className="border-l-4 border-zinc-300 dark:border-zinc-700 pl-4 py-1 italic my-3 text-zinc-600 dark:text-zinc-400" {...props}>
+        <blockquote
+          className="border-l-4 border-zinc-300 dark:border-zinc-700 pl-4 py-1 italic my-3 text-zinc-600 dark:text-zinc-400"
+          {...props}
+        >
           {children}
         </blockquote>
       ),
       table: ({ children, ...props }: any) => (
         <div className="overflow-x-auto my-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full border-collapse text-left text-sm" {...props}>
+          <table
+            className="w-full border-collapse text-left text-sm"
+            {...props}
+          >
             {children}
           </table>
         </div>
       ),
       thead: ({ children, ...props }: any) => (
-        <thead className="bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800" {...props}>
+        <thead
+          className="bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800"
+          {...props}
+        >
           {children}
         </thead>
       ),
       tbody: ({ children, ...props }: any) => (
-        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800" {...props}>
+        <tbody
+          className="divide-y divide-zinc-200 dark:divide-zinc-800"
+          {...props}
+        >
           {children}
         </tbody>
       ),
       tr: ({ children, ...props }: any) => (
-        <tr className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition-colors" {...props}>
+        <tr
+          className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition-colors"
+          {...props}
+        >
           {children}
         </tr>
       ),
       th: ({ children, ...props }: any) => (
-        <th className="px-4 py-2 font-semibold text-zinc-900 dark:text-white border-r last:border-r-0 border-zinc-200 dark:border-zinc-800" {...props}>
+        <th
+          className="px-4 py-2 font-semibold text-zinc-900 dark:text-white border-r last:border-r-0 border-zinc-200 dark:border-zinc-800"
+          {...props}
+        >
           {children}
         </th>
       ),
       td: ({ children, ...props }: any) => (
-        <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300 border-r last:border-r-0 border-zinc-200 dark:border-zinc-800" {...props}>
+        <td
+          className="px-4 py-2 text-zinc-700 dark:text-zinc-300 border-r last:border-r-0 border-zinc-200 dark:border-zinc-800"
+          {...props}
+        >
           {children}
         </td>
       ),
@@ -154,7 +196,10 @@ function MessageContentRenderer({
 
         if (isInline) {
           return (
-            <code className="rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 font-mono text-xs text-blue-600 dark:text-blue-400" {...props}>
+            <code
+              className="rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 font-mono text-xs text-blue-600 dark:text-blue-400"
+              {...props}
+            >
               {children}
             </code>
           );
@@ -182,7 +227,7 @@ function MessageContentRenderer({
         );
       },
     }),
-    [copiedBlockId, citations, msgId, setActiveCitation]
+    [copiedBlockId, citations, msgId, setActiveCitation],
   );
 
   return (
@@ -216,7 +261,6 @@ export function ChatFeed({
   activeConversationId = null,
   setActiveCitation,
 }: ChatFeedProps) {
-
   // --- Scrolling and stream-following state refs ---
   const containerRef = React.useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = React.useRef<boolean>(true);
@@ -284,8 +328,6 @@ export function ChatFeed({
       scrollToBottom();
     }
   }, [activeMessages, isStreaming]);
-
-
 
   return (
     <div
@@ -393,60 +435,66 @@ export function ChatFeed({
                       {msg.content}
                     </p>
                   ) : (
-                      <>
-                        <div className="prose prose-zinc dark:prose-invert max-w-none">
-                          <MessageContentRenderer
-                            content={msg.content}
-                            msgId={msg.id}
-                            citations={msg.citations}
-                            setActiveCitation={setActiveCitation}
-                          />
-                        </div>
-                        {msg.citations && msg.citations.length > 0 && (
-                          <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs">
-                            <span className="font-semibold text-zinc-500 dark:text-zinc-400 block mb-2 uppercase tracking-wider text-[9px]">
-                              Sources
-                            </span>
-                            <div className="flex flex-wrap gap-2">
-                              {msg.citations.map((cite, idx) => (
-                                <div
-                                  key={idx}
-                                  id={`source-${idx + 1}`}
-                                  onClick={() => {
-                                    if (setActiveCitation) {
-                                      setActiveCitation({
-                                        messageId: msg.id,
-                                        index: idx + 1,
-                                        citation: cite,
-                                      });
-                                    }
-                                  }}
-                                  className="flex flex-col p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 hover:bg-zinc-100 dark:hover:bg-zinc-850 transition-colors cursor-pointer max-w-[280px]"
-                                >
-                                  <div className="flex items-center justify-between gap-2 mb-1">
-                                    <span className="font-semibold text-[10px] text-blue-600 dark:text-blue-400 font-mono bg-blue-50 dark:bg-blue-900/30 px-1 rounded">
-                                      [{idx + 1}]
+                    <>
+                      <div className="prose prose-zinc dark:prose-invert max-w-none">
+                        <MessageContentRenderer
+                          content={msg.content}
+                          msgId={msg.id}
+                          citations={msg.citations}
+                          setActiveCitation={setActiveCitation}
+                        />
+                      </div>
+                      {msg.citations && msg.citations.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs">
+                          <span className="font-semibold text-zinc-500 dark:text-zinc-400 block mb-2 uppercase tracking-wider text-[9px]">
+                            Sources
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {msg.citations.map((cite, idx) => (
+                              <div
+                                key={idx}
+                                id={`source-${idx + 1}`}
+                                onClick={() => {
+                                  if (setActiveCitation) {
+                                    setActiveCitation({
+                                      messageId: msg.id,
+                                      index: idx + 1,
+                                      citation: cite,
+                                    });
+                                  }
+                                }}
+                                className="flex flex-col p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 hover:bg-zinc-100 dark:hover:bg-zinc-850 transition-colors cursor-pointer max-w-[280px]"
+                              >
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <span className="font-semibold text-[10px] text-blue-600 dark:text-blue-400 font-mono bg-blue-50 dark:bg-blue-900/30 px-1 rounded">
+                                    [{idx + 1}]
+                                  </span>
+                                  <span
+                                    className="font-medium text-[11px] text-zinc-700 dark:text-zinc-300 truncate max-w-[150px]"
+                                    title={cite.source}
+                                  >
+                                    {cite.source}
+                                  </span>
+                                  {cite.page && (
+                                    <span className="text-[9px] bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded text-zinc-500 shrink-0">
+                                      Page {cite.page}
                                     </span>
-                                    <span className="font-medium text-[11px] text-zinc-700 dark:text-zinc-300 truncate max-w-[150px]" title={cite.source}>
-                                      {cite.source}
-                                    </span>
-                                    {cite.page && (
-                                      <span className="text-[9px] bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded text-zinc-500 shrink-0">
-                                        Page {cite.page}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {cite.text && (
-                                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-2 italic" title={cite.text}>
-                                      "{cite.text}"
-                                    </p>
                                   )}
                                 </div>
-                              ))}
-                            </div>
+                                {cite.text && (
+                                  <p
+                                    className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-2 italic"
+                                    title={cite.text}
+                                  >
+                                    "{cite.text}"
+                                  </p>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                        )}
-                      </>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {/* Error feedback */}

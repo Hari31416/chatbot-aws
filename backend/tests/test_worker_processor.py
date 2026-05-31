@@ -245,3 +245,67 @@ def test_processor_failure_sets_failed_and_cleans_staging() -> None:
     mock_s3.delete_object.assert_called_once_with(
         Bucket="test-bucket", Key="staging/user-4/doc-4/doc.txt"
     )
+
+
+def test_processor_image_path_reads_s3_and_ingests() -> None:
+    """Image payload → read from S3, ingest_image_document, update status=ready, delete staging."""
+    mock_repo = MagicMock()
+    mock_repo.get_rag_document.return_value = {"tags": ["photo"]}
+
+    mock_rag = MagicMock()
+    mock_rag.ingest_image_document = AsyncMock(
+        return_value=RagIngestResult(document_id="doc-5", chunks_ingested=1)
+    )
+
+    mock_body = MagicMock()
+    mock_body.read.return_value = b"image content"
+    mock_s3 = MagicMock()
+    mock_s3.get_object.return_value = {"Body": mock_body}
+
+    event = {
+        "Records": [
+            {
+                "body": json.dumps({
+                    "source": "image",
+                    "document_id": "doc-5",
+                    "user_id": "user-5",
+                    "filename": "photo.png",
+                    "s3_raw_key": "rag-raw-uploads/user-5/doc-5.png",
+                    "staging_key": "staging/user-5/doc-5/photo.png",
+                    "bucket_name": "test-bucket",
+                })
+            }
+        ]
+    }
+
+    with (
+        patch("app.worker_processor.get_repository", return_value=mock_repo),
+        patch("app.worker_processor.get_rag_service", return_value=mock_rag),
+        patch("app.worker_processor.get_s3_client", return_value=mock_s3),
+        patch("app.worker_processor.get_settings"),
+    ):
+        from app.worker_processor import handler
+        handler(event, None)
+
+    mock_s3.get_object.assert_called_once_with(
+        Bucket="test-bucket", Key="rag-raw-uploads/user-5/doc-5.png"
+    )
+    mock_rag.ingest_image_document.assert_awaited_once_with(
+        filename="photo.png",
+        data=b"image content",
+        mime_type="image/png",
+        user_id="user-5",
+        document_id="doc-5",
+        tags=["photo"],
+        image_s3_key="rag-raw-uploads/user-5/doc-5.png",
+    )
+
+    # Status → ready
+    call_args = mock_repo.update_rag_document_status.call_args[0]
+    assert call_args[2] == "ready"
+    assert call_args[3] == 1
+
+    # Staging file deleted
+    mock_s3.delete_object.assert_called_once_with(
+        Bucket="test-bucket", Key="staging/user-5/doc-5/photo.png"
+    )

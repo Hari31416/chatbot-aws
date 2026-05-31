@@ -1,7 +1,10 @@
 import * as React from "react";
 import type { RagDocument } from "../types";
 import { ingestRagFile } from "../services/api";
-import { ingestRagDocumentGql, deleteRagDocumentGql } from "../services/graphql";
+import {
+  ingestRagDocumentGql,
+  deleteRagDocumentGql,
+} from "../services/graphql";
 import { useToast } from "./ui/Toast";
 import { Button } from "./ui/button";
 import {
@@ -50,7 +53,7 @@ export function DocumentsModal({
 
   // General status
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [deletingId, setDeletingId] = React.useState<string | null>(null)
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -60,7 +63,7 @@ export function DocumentsModal({
       setTagsInput("");
       setSearchQuery("");
       setActiveTab("catalog");
-      setDeletingId(null)
+      setDeletingId(null);
     }
   }, [isOpen]);
 
@@ -180,28 +183,28 @@ export function DocumentsModal({
   // Handle Document Deletion
   const handleDelete = async (documentId: string, filename: string) => {
     if (!window.confirm(`Are you sure you want to delete "${filename}"?`)) {
-      return
+      return;
     }
 
-    setDeletingId(documentId)
+    setDeletingId(documentId);
     try {
-      await deleteRagDocumentGql(documentId, apiBaseUrl)
+      await deleteRagDocumentGql(documentId, apiBaseUrl);
       toast({
-        title: 'Document Deleted',
+        title: "Document Deleted",
         description: `"${filename}" has been successfully removed.`,
-        type: 'success',
-      })
-      refetchDocuments()
+        type: "success",
+      });
+      refetchDocuments();
     } catch (err: any) {
       toast({
-        title: 'Delete Failed',
-        description: err.message || 'An error occurred during deletion.',
-        type: 'error',
-      })
+        title: "Delete Failed",
+        description: err.message || "An error occurred during deletion.",
+        type: "error",
+      });
     } finally {
-      setDeletingId(null)
+      setDeletingId(null);
     }
-  }
+  };
 
   // File Drop Handlers
   const handleDragOver = (e: React.DragEvent) => {
@@ -356,7 +359,9 @@ export function DocumentsModal({
                           <th className="px-6 py-3.5">Footprint</th>
                           <th className="px-6 py-3.5">Ingested Date</th>
                           <th className="px-6 py-3.5 text-right">Identifier</th>
-                            <th className="px-6 py-3.5 text-right w-16">Actions</th>
+                          <th className="px-6 py-3.5 text-right w-16">
+                            Actions
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-150 dark:divide-zinc-800 text-xs">
@@ -416,7 +421,12 @@ export function DocumentsModal({
                             </td>
                             <td className="px-6 py-4 text-right">
                               <button
-                                onClick={() => handleDelete(doc.document_id, doc.source_doc || doc.filename)}
+                                onClick={() =>
+                                  handleDelete(
+                                    doc.document_id,
+                                    doc.source_doc || doc.filename,
+                                  )
+                                }
                                 disabled={deletingId === doc.document_id}
                                 className="p-1 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400 transition cursor-pointer disabled:opacity-50 inline-flex items-center justify-center"
                                 title="Delete document"

@@ -189,3 +189,54 @@ def test_initializer_utf8_failure_falls_back_to_binary() -> None:
     # Should have fallen back to binary path → Textract started
     mock_textract.start_document_text_detection.assert_called_once()
     mock_repo.save_textract_job.assert_called_once()
+
+
+def test_initializer_image_file_routes_to_sqs() -> None:
+    """An image upload should: copy file, and enqueue to SQS with source=image."""
+    mock_repo = MagicMock()
+    mock_s3 = MagicMock()
+    mock_sqs = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.processor_queue_url = (
+        "https://sqs.us-east-1.amazonaws.com/123/processor"
+    )
+    mock_settings.s3_bucket_name = "test-bucket"
+
+    event = _make_s3_event("test-bucket", "staging/user-4/doc-4/photo.png")
+
+    with (
+        patch("app.worker_initializer.get_repository", return_value=mock_repo),
+        patch("app.worker_initializer.get_s3_client", return_value=mock_s3),
+        patch("app.worker_initializer.get_settings", return_value=mock_settings),
+        patch("app.worker_initializer.get_sqs_client", return_value=mock_sqs),
+    ):
+        from app.worker_initializer import handler
+
+        handler(event, None)
+
+    # Status should be set to "processing" first
+    mock_repo.update_rag_document_status.assert_any_call(
+        "user-4",
+        "doc-4",
+        "processing",
+        0,
+        mock_repo.update_rag_document_status.call_args_list[0][0][4],
+    )
+
+    # Image should be copied to rag-raw-uploads/
+    mock_s3.copy_object.assert_called_once()
+    copy_args = mock_s3.copy_object.call_args[1]
+    assert copy_args["Bucket"] == "test-bucket"
+    assert copy_args["Key"] == "rag-raw-uploads/user-4/doc-4.png"
+
+    # Enqueued message checks
+    mock_sqs.send_message.assert_called_once()
+    send_args = mock_sqs.send_message.call_args[1]
+    assert send_args["QueueUrl"] == "https://sqs.us-east-1.amazonaws.com/123/processor"
+    payload = json.loads(send_args["MessageBody"])
+    assert payload["source"] == "image"
+    assert payload["document_id"] == "doc-4"
+    assert payload["user_id"] == "user-4"
+    assert payload["filename"] == "photo.png"
+    assert payload["s3_raw_key"] == "rag-raw-uploads/user-4/doc-4.png"
+    assert payload["staging_key"] == "staging/user-4/doc-4/photo.png"

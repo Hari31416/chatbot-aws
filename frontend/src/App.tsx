@@ -1,17 +1,17 @@
 import * as React from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import type { Message, Conversation, ActiveCitationInfo, RagDocument } from "./types";
-import {
-  sendTextMessage,
-  sendImageMessage,
-  checkHealth,
-  sendChatMessageStream,
-} from './services/api'
+import { useQuery } from "@tanstack/react-query";
+import type {
+  Message,
+  Conversation,
+  ActiveCitationInfo,
+  RagDocument,
+} from "./types";
+import { checkHealth, sendChatMessageStream } from "./services/api";
 import {
   fetchInitialData,
   fetchConversationMessagesGql,
   deleteConversationGql,
-} from './services/graphql'
+} from "./services/graphql";
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/components/theme-provider";
 import { useAuth } from "@clerk/react";
@@ -84,7 +84,8 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isDocumentsOpen, setIsDocumentsOpen] = React.useState(false);
   const [lightboxImage, setLightboxImage] = React.useState<string | null>(null);
-  const [activeCitation, setActiveCitation] = React.useState<ActiveCitationInfo | null>(null);
+  const [activeCitation, setActiveCitation] =
+    React.useState<ActiveCitationInfo | null>(null);
 
   // --- Chat & Conversation State ---
   const [conversations, setConversations] = React.useState<Conversation[]>(
@@ -119,7 +120,7 @@ export function App() {
   // Deduplicate: if both URLs are identical, reuse the same query result to
   // avoid two concurrent /health calls against the same endpoint.
   const isSameUrl =
-    apiBaseUrl.replace(/\/$/, '') === functionUrl.replace(/\/$/, '')
+    apiBaseUrl.replace(/\/$/, "") === functionUrl.replace(/\/$/, "");
 
   const {
     data: isBackendOnline,
@@ -141,23 +142,26 @@ export function App() {
     queryKey: ["functionHealth", functionUrl],
     // When both URLs resolve to the same host, skip a redundant fetch and
     // reuse the backend health result instead.
-    queryFn: () => (isSameUrl ? Promise.resolve(isBackendOnline ?? false) : checkHealth(functionUrl)),
+    queryFn: () =>
+      isSameUrl
+        ? Promise.resolve(isBackendOnline ?? false)
+        : checkHealth(functionUrl),
     refetchInterval: 30000,
-    enabled: !isSameUrl || backendHealthStatus !== 'pending',
+    enabled: !isSameUrl || backendHealthStatus !== "pending",
   });
 
   // --- Initial data: fetch health + conversations + ragDocuments in one GraphQL call ---
-  const [ragDocuments, setRagDocuments] = React.useState<RagDocument[]>([])
+  const [ragDocuments, setRagDocuments] = React.useState<RagDocument[]>([]);
   const refetchRagDocuments = React.useCallback(async () => {
-    if (!apiBaseUrl || !isLoggedIn) return
+    if (!apiBaseUrl || !isLoggedIn) return;
     try {
-      const data = await fetchInitialData(apiBaseUrl)
-      setConversations(data.conversations)
-      setRagDocuments(data.ragDocuments)
+      const data = await fetchInitialData(apiBaseUrl);
+      setConversations(data.conversations);
+      setRagDocuments(data.ragDocuments);
     } catch (err: unknown) {
-      console.error('Failed to refresh initial data:', err)
+      console.error("Failed to refresh initial data:", err);
     }
-  }, [apiBaseUrl, isLoggedIn])
+  }, [apiBaseUrl, isLoggedIn]);
 
   // --- Sync configs and sessions ---
   React.useEffect(() => {
@@ -194,30 +198,32 @@ export function App() {
 
   // Fetch conversations + ragDocuments in a single GraphQL call on mount / login change
   React.useEffect(() => {
-    if (!apiBaseUrl || !isLoggedIn) return
+    if (!apiBaseUrl || !isLoggedIn) return;
 
-    let active = true
+    let active = true;
     async function loadInitialData() {
       try {
-        const data = await fetchInitialData(apiBaseUrl)
+        const data = await fetchInitialData(apiBaseUrl);
         if (active) {
-          setConversations(data.conversations)
-          setRagDocuments(data.ragDocuments)
+          setConversations(data.conversations);
+          setRagDocuments(data.ragDocuments);
         }
       } catch (err: unknown) {
-        console.error('Failed to fetch initial data via GraphQL:', err)
+        console.error("Failed to fetch initial data via GraphQL:", err);
       }
     }
-    void loadInitialData()
+    void loadInitialData();
     return () => {
-      active = false
-    }
-  }, [apiBaseUrl, isLoggedIn, userId])
+      active = false;
+    };
+  }, [apiBaseUrl, isLoggedIn, userId]);
 
   // Keep a ref to isStreaming so the messages effect can read the latest value
   // without adding it to the dependency array (which would cause spurious re-fetches).
   const isStreamingRef = React.useRef(isStreaming);
-  React.useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+  React.useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   // Fetch messages for active conversation from backend when activeConversationId changes.
   React.useEffect(() => {
@@ -290,108 +296,7 @@ export function App() {
     });
   };
 
-  // --- Message mutation handlers ---
-  const sendMutation = useMutation({
-    mutationFn: async ({
-      text,
-      imageFiles,
-      convId,
-    }: {
-      text: string;
-      imageFiles: File[];
-      convId: string;
-    }) => {
-      if (imageFiles.length > 0) {
-        return sendImageMessage(
-          imageFiles,
-          text || null,
-          convId,
-          userId,
-          apiBaseUrl,
-        );
-      } else {
-        return sendTextMessage(
-          { message: text, conversation_id: convId, user_id: userId },
-          apiBaseUrl,
-        );
-      }
-    },
-    onSuccess: (data, variables) => {
-      const convId = variables.convId;
-      const assistantMsgId =
-        data.assistant_message_id || Math.random().toString();
-      const assistantText = data.assistant_message || "";
-
-      const assistantMsg: Message = {
-        id: assistantMsgId,
-        role: "assistant",
-        content: assistantText,
-        created_at: data.created_at || new Date().toISOString(),
-        attachment: data.attachment,
-        attachments: data.attachments,
-        citations: data.citations,
-      };
-
-      setMessages((prev) => {
-        const currentList = prev[convId] || [];
-        const updatedList = currentList.map((m) => {
-          if (m.id === "temp-user-msg") {
-            return {
-              ...m,
-              id: data.user_message_id || m.id,
-              attachment: data.attachment || m.attachment,
-              attachments: data.attachments || m.attachments,
-            };
-          }
-          return m;
-        });
-        return {
-          ...prev,
-          [convId]: [...updatedList, assistantMsg],
-        };
-      });
-
-      const newName = variables.text.slice(0, 30) || "Image Chat";
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id === convId) {
-            return {
-              ...c,
-              name: c.name === "New Chat..." ? newName : c.name,
-              isLocal: false,
-            };
-          }
-          return c;
-        }),
-      );
-    },
-    onError: (error: any, variables) => {
-      const convId = variables.convId;
-      toast({
-        title: "Error sending message",
-        description: error.message || "Server is not responding",
-        type: "error",
-      });
-
-      setMessages((prev) => {
-        const currentList = prev[convId] || [];
-        return {
-          ...prev,
-          [convId]: currentList.map((m) => {
-            if (m.id === "temp-user-msg") {
-              return { ...m, error: error.message || "Error occurred" };
-            }
-            return m;
-          }),
-        };
-      });
-    },
-  });
-
-  // Keep a ref to sendMutation.isPending so effects can read the latest value
-  // without adding it to their dependency arrays.
-  const isMutatingRef = React.useRef(sendMutation.isPending);
-  React.useEffect(() => { isMutatingRef.current = sendMutation.isPending; }, [sendMutation.isPending]);
+  // --- Message handlers ---
 
   // --- Chat Handlers ---
   const handleCreateConversation = () => {
@@ -491,6 +396,29 @@ export function App() {
     e.preventDefault();
     if (!inputText.trim() && selectedImages.length === 0) return;
 
+    let base64Images: string[] | null = null;
+    if (selectedImages.length > 0) {
+      try {
+        base64Images = await Promise.all(
+          selectedImages.map((file) => {
+            return new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.readAsDataURL(file);
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = (err) => reject(err);
+            });
+          }),
+        );
+      } catch (err: any) {
+        toast({
+          title: "Error processing image",
+          description: err.message || "Failed to read image files",
+          type: "error",
+        });
+        return;
+      }
+    }
+
     let currentConvId = activeConversationId;
     if (!currentConvId) {
       const newId = Math.random().toString(36).substring(2, 9);
@@ -544,136 +472,129 @@ export function App() {
       .map((item) => item.trim())
       .filter(Boolean);
 
-    if (selectedImages.length > 0) {
-      sendMutation.mutate({
-        text: inputText.trim(),
-        imageFiles: selectedImages,
-        convId: currentConvId,
-      });
-    } else {
-      setIsStreaming(true);
+    setIsStreaming(true);
 
-      const tempAssistantMsgId = "temp-assistant-msg";
-      const tempAssistantMsg: Message = {
-        id: tempAssistantMsgId,
-        role: "assistant",
-        content: "",
-        created_at: new Date().toISOString(),
+    const tempAssistantMsgId = "temp-assistant-msg";
+    const tempAssistantMsg: Message = {
+      id: tempAssistantMsgId,
+      role: "assistant",
+      content: "",
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((prev) => {
+      const currentList = prev[currentConvId!] || [];
+      return {
+        ...prev,
+        [currentConvId!]: [...currentList, tempAssistantMsg],
       };
+    });
 
-      setMessages((prev) => {
-        const currentList = prev[currentConvId!] || [];
-        return {
-          ...prev,
-          [currentConvId!]: [...currentList, tempAssistantMsg],
-        };
-      });
-
-      const token = await getCurrentSessionToken();
-      sendChatMessageStream(
-        inputText.trim(),
-        functionUrl || apiBaseUrl,
-        token,
-        currentConvId,
-        (chunkText, citations, finalContent) => {
-          setMessages((prev) => {
-            const currentList = prev[currentConvId!] || [];
-            return {
-              ...prev,
-              [currentConvId!]: currentList.map((m) => {
-                if (m.id === tempAssistantMsgId) {
-                  let content = m.content + chunkText;
-                  if (finalContent !== null && finalContent !== undefined) {
-                    content = finalContent;
-                  }
-                  return {
-                    ...m,
-                    content,
-                    citations: citations || m.citations,
-                  };
+    const token = await getCurrentSessionToken();
+    sendChatMessageStream(
+      inputText.trim(),
+      functionUrl || apiBaseUrl,
+      token,
+      currentConvId,
+      (chunkText, citations, finalContent) => {
+        setMessages((prev) => {
+          const currentList = prev[currentConvId!] || [];
+          return {
+            ...prev,
+            [currentConvId!]: currentList.map((m) => {
+              if (m.id === tempAssistantMsgId) {
+                let content = m.content + chunkText;
+                if (finalContent !== null && finalContent !== undefined) {
+                  content = finalContent;
                 }
-                return m;
-              }),
-            };
-          });
-        },
-        (finalConvId, assistantMsgId, userMsgId, citations) => {
-          setMessages((prev) => {
-            const currentList = prev[finalConvId] || [];
-            return {
-              ...prev,
-              [finalConvId]: currentList.map((m) => {
-                if (m.id === "temp-user-msg") {
-                  return { ...m, id: userMsgId || m.id };
-                }
-                if (m.id === tempAssistantMsgId) {
-                  return {
-                    ...m,
-                    id: assistantMsgId || m.id,
-                    citations: citations || m.citations,
-                  };
-                }
-                return m;
-              }),
-            };
-          });
-
-          const newName = inputText.trim().slice(0, 30) || "New Chat...";
-          setConversations((prev) =>
-            prev.map((c) => {
-              if (c.id === currentConvId) {
                 return {
-                  ...c,
-                  id: finalConvId,
-                  name: c.name === "New Chat..." ? newName : c.name,
-                  isLocal: false,
+                  ...m,
+                  content,
+                  citations: citations || m.citations,
                 };
               }
-              return c;
+              return m;
             }),
-          );
+          };
+        });
+      },
+      (finalConvId, assistantMsgId, userMsgId, citations) => {
+        setMessages((prev) => {
+          const currentList = prev[finalConvId] || [];
+          return {
+            ...prev,
+            [finalConvId]: currentList.map((m) => {
+              if (m.id === "temp-user-msg") {
+                return { ...m, id: userMsgId || m.id };
+              }
+              if (m.id === tempAssistantMsgId) {
+                return {
+                  ...m,
+                  id: assistantMsgId || m.id,
+                  citations: citations || m.citations,
+                };
+              }
+              return m;
+            }),
+          };
+        });
 
-          if (
-            activeConversationId === currentConvId &&
-            currentConvId !== finalConvId
-          ) {
-            setActiveConversationId(finalConvId);
-          }
+        const newName = inputText.trim().slice(0, 30) || "New Chat...";
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === currentConvId) {
+              return {
+                ...c,
+                id: finalConvId,
+                name: c.name === "New Chat..." ? newName : c.name,
+                isLocal: false,
+              };
+            }
+            return c;
+          }),
+        );
 
-          setIsStreaming(false);
-        },
-        (errorMsg) => {
-          toast({
-            title: "Error streaming response",
-            description: errorMsg,
-            type: "error",
-          });
+        if (
+          activeConversationId === currentConvId &&
+          currentConvId !== finalConvId
+        ) {
+          setActiveConversationId(finalConvId);
+        }
 
-          setMessages((prev) => {
-            const currentList = prev[currentConvId!] || [];
-            return {
-              ...prev,
-              [currentConvId!]: currentList.map((m) => {
-                if (m.id === "temp-user-msg") {
-                  return { ...m, error: errorMsg };
-                }
-                if (m.id === tempAssistantMsgId) {
-                  return { ...m, error: errorMsg };
-                }
-                return m;
-              }),
-            };
-          });
+        setIsStreaming(false);
+      },
+      (errorMsg) => {
+        toast({
+          title: "Error streaming response",
+          description: errorMsg,
+          type: "error",
+        });
 
-          setIsStreaming(false);
-        },
-        {
-          use_rag: useRag,
-          rag_documents: ragDocuments.length > 0 ? ragDocuments : null,
-          rag_tags: selectedTags.length > 0 ? selectedTags : null,
-        },
-      );
-    }
+        setMessages((prev) => {
+          const currentList = prev[currentConvId!] || [];
+          return {
+            ...prev,
+            [currentConvId!]: currentList.map((m) => {
+              if (m.id === "temp-user-msg") {
+                return { ...m, error: errorMsg };
+              }
+              if (m.id === tempAssistantMsgId) {
+                return { ...m, error: errorMsg };
+              }
+              return m;
+            }),
+          };
+        });
+
+        setIsStreaming(false);
+      },
+      {
+        use_rag: useRag,
+        rag_documents: ragDocuments.length > 0 ? ragDocuments : null,
+        rag_tags: selectedTags.length > 0 ? selectedTags : null,
+      },
+      base64Images,
+    );
 
     setInputText("");
     setSelectedImages([]);
@@ -785,13 +706,11 @@ export function App() {
         <ChatFeed
           activeMessages={activeMessages}
           isPending={
-            sendMutation.isPending ||
-            (isStreaming &&
-              !(
-                activeMessages[activeMessages.length - 1]?.role ===
-                  "assistant" &&
-                activeMessages[activeMessages.length - 1]?.content.length > 0
-              ))
+            isStreaming &&
+            !(
+              activeMessages[activeMessages.length - 1]?.role === "assistant" &&
+              activeMessages[activeMessages.length - 1]?.content.length > 0
+            )
           }
           setLightboxImage={setLightboxImage}
           setInputText={setInputText}
@@ -813,7 +732,7 @@ export function App() {
           handleImageChange={handleImageChange}
           handleRemoveImage={handleRemoveImage}
           fileInputRef={fileInputRef}
-          isPending={sendMutation.isPending || isStreaming}
+          isPending={isStreaming}
           useRag={useRag}
           setUseRag={setUseRag}
           ragDocumentsText={ragDocumentsText}

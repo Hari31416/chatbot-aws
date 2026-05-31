@@ -44,7 +44,10 @@ export function InputBar({
 
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setIsDropdownOpen(false);
       }
     }
@@ -98,7 +101,7 @@ export function InputBar({
 
   const searchedDocuments = React.useMemo(() => {
     return visibleDocuments.filter((doc) =>
-      doc.filename.toLowerCase().includes(docSearchQuery.toLowerCase())
+      doc.filename.toLowerCase().includes(docSearchQuery.toLowerCase()),
     );
   }, [visibleDocuments, docSearchQuery]);
 
@@ -150,7 +153,10 @@ export function InputBar({
             Ground with RAG Knowledge
           </label>
           {useRag && selectedImages.length === 0 && (
-            <div className="sm:ml-auto w-full sm:w-auto relative" ref={dropdownRef}>
+            <div
+              className="sm:ml-auto w-full sm:w-auto relative"
+              ref={dropdownRef}
+            >
               <button
                 type="button"
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -194,15 +200,20 @@ export function InputBar({
                       </div>
                     ) : (
                       searchedDocuments.map((doc: RagDocument) => {
-                        const isSelected = selectedDocuments.includes(doc.source_doc);
+                        const isSelected = selectedDocuments.includes(
+                          doc.source_doc,
+                        );
                         const isProcessing = doc.status === "processing";
                         const isFailed = doc.status === "failed";
 
                         return (
                           <label
                             key={doc.document_id}
-                            className={`flex items-start gap-2.5 px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer select-none transition ${isSelected ? "bg-blue-50/10 dark:bg-blue-900/20" : ""
-                              } ${isProcessing || isFailed ? "opacity-60 cursor-not-allowed" : ""}`}
+                            className={`flex items-start gap-2.5 px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer select-none transition ${
+                              isSelected
+                                ? "bg-blue-50/10 dark:bg-blue-900/20"
+                                : ""
+                            } ${isProcessing || isFailed ? "opacity-60 cursor-not-allowed" : ""}`}
                           >
                             <input
                               type="checkbox"
@@ -212,19 +223,28 @@ export function InputBar({
                               className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                             />
                             <div className="flex-1 min-w-0 text-left">
-                              <p className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-200 truncate" title={doc.filename}>
+                              <p
+                                className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-200 truncate"
+                                title={doc.filename}
+                              >
                                 {isProcessing ? "⏳ " : isFailed ? "⚠️ " : ""}
                                 {doc.filename}
                               </p>
                               <div className="flex flex-wrap gap-1 mt-0.5">
                                 <span className="text-[9px] text-zinc-400 font-mono">
-                                  {doc.status === "ready" ? `${doc.chunks_ingested} chunks` : doc.status}
+                                  {doc.status === "ready"
+                                    ? `${doc.chunks_ingested} chunks`
+                                    : doc.status}
                                 </span>
-                                {doc.tags && doc.tags.map((t: string) => (
-                                  <span key={t} className="text-[8px] px-1 py-0.2 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded font-bold">
-                                    #{t}
-                                  </span>
-                                ))}
+                                {doc.tags &&
+                                  doc.tags.map((t: string) => (
+                                    <span
+                                      key={t}
+                                      className="text-[8px] px-1 py-0.2 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded font-bold"
+                                    >
+                                      #{t}
+                                    </span>
+                                  ))}
                               </div>
                             </div>
                           </label>
@@ -240,7 +260,9 @@ export function InputBar({
 
         {useRag && allTags.length > 0 && selectedImages.length === 0 && (
           <div className="flex flex-wrap items-center gap-1.5 px-1 text-xs mb-1">
-            <span className="text-zinc-550 font-semibold dark:text-zinc-400">Filter by tags:</span>
+            <span className="text-zinc-550 font-semibold dark:text-zinc-400">
+              Filter by tags:
+            </span>
             {allTags.map((tag) => {
               const selected = selectedTags.includes(tag);
               return (
@@ -250,8 +272,8 @@ export function InputBar({
                   onClick={() => toggleTag(tag)}
                   className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition cursor-pointer ${
                     selected
-                    ? "border-blue-500 bg-blue-600 text-white dark:bg-blue-500"
-                    : "border-zinc-200 bg-white text-zinc-650 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                      ? "border-blue-500 bg-blue-600 text-white dark:bg-blue-500"
+                      : "border-zinc-200 bg-white text-zinc-650 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
                   }`}
                 >
                   #{tag}
@@ -261,28 +283,34 @@ export function InputBar({
           </div>
         )}
 
-        {useRag && selectedDocuments.length > 0 && selectedImages.length === 0 && (
-          <div className="flex flex-wrap gap-1.5 px-1 py-1 max-h-16 overflow-y-auto border-t border-zinc-100 dark:border-zinc-850 pt-2">
-            {selectedDocuments.map((docName) => {
-              const docItem = ragDocuments.find(d => d.source_doc === docName);
-              return (
-                <div
-                  key={docName}
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/50 dark:bg-blue-950 dark:text-blue-200 text-[11px] font-semibold"
-                >
-                  <span className="truncate max-w-40">{docItem?.filename || docName}</span>
-                  <button
-                    type="button"
-                    onClick={() => toggleDocument(docName)}
-                    className="hover:bg-blue-100 dark:hover:bg-blue-900 p-0.5 rounded cursor-pointer text-[10px] leading-none text-blue-500"
+        {useRag &&
+          selectedDocuments.length > 0 &&
+          selectedImages.length === 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1 py-1 max-h-16 overflow-y-auto border-t border-zinc-100 dark:border-zinc-850 pt-2">
+              {selectedDocuments.map((docName) => {
+                const docItem = ragDocuments.find(
+                  (d) => d.source_doc === docName,
+                );
+                return (
+                  <div
+                    key={docName}
+                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/50 dark:bg-blue-950 dark:text-blue-200 text-[11px] font-semibold"
                   >
-                    ✕
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                    <span className="truncate max-w-40">
+                      {docItem?.filename || docName}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleDocument(docName)}
+                      className="hover:bg-blue-100 dark:hover:bg-blue-900 p-0.5 rounded cursor-pointer text-[10px] leading-none text-blue-500"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
         {/* Input Row matching user image search style */}
         <div className="relative flex items-center bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-full px-4 py-1.5 focus-within:ring-2 focus-within:ring-blue-500 transition shadow-xs">

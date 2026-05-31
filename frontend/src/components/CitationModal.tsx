@@ -14,7 +14,12 @@ interface CitationModalProps {
   };
 }
 
-export function CitationModal({ isOpen, onClose, index, citation }: CitationModalProps) {
+export function CitationModal({
+  isOpen,
+  onClose,
+  index,
+  citation,
+}: CitationModalProps) {
   const [copied, setCopied] = React.useState(false);
 
   React.useEffect(() => {
@@ -47,7 +52,10 @@ export function CitationModal({ isOpen, onClose, index, citation }: CitationModa
             <span className="font-mono text-xs font-bold bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-450 px-2.5 py-0.5 rounded-full shrink-0">
               Source [{index}]
             </span>
-            <h2 className="font-bold text-base leading-tight truncate max-w-xs md:max-w-md" title={citation.source}>
+            <h2
+              className="font-bold text-base leading-tight truncate max-w-xs md:max-w-md"
+              title={citation.source}
+            >
               Reference: {citation.source}
             </h2>
           </div>
@@ -64,7 +72,11 @@ export function CitationModal({ isOpen, onClose, index, citation }: CitationModa
               stroke="currentColor"
               className="w-5 h-5"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </div>

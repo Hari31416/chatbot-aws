@@ -10,6 +10,7 @@ class ChatRequest(BaseModel):
     use_rag: bool = False
     rag_documents: list[str] | None = None
     rag_tags: list[str] | None = None
+    images: list[str] | None = None
 
 
 class RagIngestRequest(BaseModel):

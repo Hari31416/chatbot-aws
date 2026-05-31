@@ -96,59 +96,6 @@ export async function sendTextMessage(
 }
 
 /**
- * Sends an image-based chat request to POST /chat/image
- */
-export async function sendImageMessage(
-  fileOrFiles: File | File[],
-  message: string | null,
-  conversationId: string | null,
-  userId: string | null,
-  apiBaseUrl: string,
-): Promise<ChatResponse> {
-  const cleanUrl = apiBaseUrl.replace(/\/$/, "");
-  const formData = new FormData();
-  if (Array.isArray(fileOrFiles)) {
-    fileOrFiles.forEach((file) => {
-      formData.append("files", file);
-    });
-  } else {
-    formData.append("file", fileOrFiles);
-  }
-  if (message) {
-    formData.append("message", message);
-  }
-  if (conversationId) {
-    formData.append("conversation_id", conversationId);
-  }
-  if (userId) {
-    formData.append("user_id", userId);
-  }
-
-  const token = await getCurrentSessionToken();
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${cleanUrl}/chat/image`, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
-
-  const data = await handleResponse<ChatResponse>(
-    response,
-    `Server responded with ${response.status}`,
-  );
-  if (data.error) {
-    throw new ApiError(data.error);
-  }
-  return data;
-}
-
-/**
  * Fetches all conversations of the user
  */
 export async function fetchConversations(
@@ -291,24 +238,24 @@ export async function deleteRagDocument(
   documentId: string,
   apiBaseUrl: string,
 ): Promise<{ deleted: boolean; document_id: string }> {
-  const cleanUrl = apiBaseUrl.replace(/\/$/, '')
-  const token = await getCurrentSessionToken()
+  const cleanUrl = apiBaseUrl.replace(/\/$/, "");
+  const token = await getCurrentSessionToken();
   const headers: Record<string, string> = {
-    Accept: 'application/json',
-  }
+    Accept: "application/json",
+  };
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const response = await fetch(`${cleanUrl}/rag/documents/${documentId}`, {
-    method: 'DELETE',
+    method: "DELETE",
     headers,
-  })
+  });
 
   return handleResponse<{ deleted: boolean; document_id: string }>(
     response,
-    'Failed to delete RAG document',
-  )
+    "Failed to delete RAG document",
+  );
 }
 
 /**
@@ -412,7 +359,11 @@ export async function sendChatMessageStream(
   apiBaseUrl: string,
   token: string | null,
   conversationId?: string | null,
-  onChunk?: (text: string, citations?: any[] | null, finalContent?: string | null) => void,
+  onChunk?: (
+    text: string,
+    citations?: any[] | null,
+    finalContent?: string | null,
+  ) => void,
   onComplete?: (
     finalConversationId: string,
     assistantMsgId: string,
@@ -421,6 +372,7 @@ export async function sendChatMessageStream(
   ) => void,
   onError?: (error: string) => void,
   ragOptions?: Pick<ChatRequest, "use_rag" | "rag_documents" | "rag_tags">,
+  images?: string[] | null,
 ): Promise<void> {
   const cleanUrl = apiBaseUrl.replace(/\/$/, "");
   try {
@@ -441,6 +393,7 @@ export async function sendChatMessageStream(
         use_rag: ragOptions?.use_rag ?? false,
         rag_documents: ragOptions?.rag_documents ?? null,
         rag_tags: ragOptions?.rag_tags ?? null,
+        images: images || null,
       }),
     });
 
@@ -494,7 +447,11 @@ export async function sendChatMessageStream(
             activeCitations = chunk.citations;
           }
           if (onChunk) {
-            onChunk(chunk.text || "", chunk.citations || null, chunk.final_content || null);
+            onChunk(
+              chunk.text || "",
+              chunk.citations || null,
+              chunk.final_content || null,
+            );
           }
           if (chunk.conversation_id) {
             activeConversationId = chunk.conversation_id;
@@ -512,7 +469,12 @@ export async function sendChatMessageStream(
     }
 
     if (onComplete && activeConversationId) {
-      onComplete(activeConversationId, activeAssistantMsgId, activeUserMsgId, activeCitations);
+      onComplete(
+        activeConversationId,
+        activeAssistantMsgId,
+        activeUserMsgId,
+        activeCitations,
+      );
     }
   } catch (error: any) {
     if (onError) {

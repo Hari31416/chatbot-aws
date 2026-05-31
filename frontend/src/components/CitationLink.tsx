@@ -71,7 +71,10 @@ export function CitationLink({ index, citation, onClick }: CitationLinkProps) {
 
           {/* Header Metadata */}
           <div className="flex items-center justify-between border-b border-zinc-150 dark:border-zinc-800 pb-1.5 mb-1.5 gap-2">
-            <span className="font-semibold text-zinc-900 dark:text-white truncate max-w-[170px]" title={citation.source}>
+            <span
+              className="font-semibold text-zinc-900 dark:text-white truncate max-w-[170px]"
+              title={citation.source}
+            >
               📄 {citation.source}
             </span>
             <div className="flex items-center gap-1 shrink-0">

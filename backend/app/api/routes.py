@@ -39,6 +39,7 @@ from ..services.prompt import (
     build_history_messages,
     build_image_chat_messages,
     build_rag_chat_messages,
+    build_multimodal_rag_chat_messages,
     build_reformulate_prompt,
 )
 from ..services.storage import build_image_key, extension_for_mime
@@ -89,13 +90,56 @@ async def _update_context(
     )
 
 
+async def _upload_payload_images(
+    conversation_id: str,
+    user_message_id: str,
+    images: list[str] | None,
+    storage,
+) -> list[dict]:
+    if not images:
+        return []
+    attachments_list = []
+    for idx, data_url in enumerate(images):
+        try:
+            header, base64_data = data_url.split(",", 1)
+            mime_type = header.split(";")[0].split(":")[1]
+            extension = extension_for_mime(mime_type)
+            suffix = f"_{idx}" if len(images) > 1 else ""
+            s3_key = build_image_key(
+                conversation_id, f"{user_message_id}{suffix}", extension
+            )
+            img_b64_str = base64_data
+            rem = len(img_b64_str) % 4
+            if rem > 0:
+                img_b64_str += "=" * (4 - rem)
+            img_bytes = base64.b64decode(img_b64_str)
+            await to_thread.run_sync(
+                storage.upload_image,
+                s3_key,
+                img_bytes,
+                mime_type,
+            )
+            attachments_list.append(
+                {
+                    "s3_key": s3_key,
+                    "mime_type": mime_type,
+                    "size_bytes": len(img_bytes),
+                }
+            )
+        except Exception as e:
+            logger.warning("Failed to process image payload %d: %s", idx, e)
+    return attachments_list
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     payload: ChatRequest,
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     llm=Depends(get_llm_client),
+    vision_llm=Depends(get_vision_llm_client),
     vector_store=Depends(get_vector_store),
+    storage=Depends(get_storage),
     user_id: str = Depends(get_current_user_id),
 ) -> ChatResponse:
     try:
@@ -118,6 +162,11 @@ async def chat(
         )
 
         user_message_id = str(uuid4())
+        attachments_list = await _upload_payload_images(
+            conversation_id, user_message_id, payload.images, storage
+        )
+        attachment_legacy = attachments_list[0] if attachments_list else None
+
         await to_thread.run_sync(
             repo.put_message,
             conversation_id,
@@ -125,8 +174,9 @@ async def chat(
             "user",
             payload.message,
             created_at,
-            None,
+            attachment_legacy,
             user_id,
+            attachments_list,
         )
 
         history = await _load_history(
@@ -181,11 +231,40 @@ async def chat(
                 logger.info("RAG requested but no context was retrieved")
                 context = "No relevant context found."
 
-            messages = build_rag_chat_messages(payload.message, history, context)
+            # Check for image chunks
+            image_chunks = [item for item in context_results if item.get("is_image")]
+            if image_chunks or payload.images:
+                llm = vision_llm
+                image_data_urls = list(payload.images) if payload.images else []
+                for chunk in image_chunks:
+                    try:
+                        img_bytes = await to_thread.run_sync(
+                            storage.download_bytes, chunk["image_s3_key"]
+                        )
+                        mime_type = chunk.get("mime_type", "image/png")
+                        encoded = base64.b64encode(img_bytes).decode("ascii")
+                        image_data_urls.append(f"data:{mime_type};base64,{encoded}")
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to download image for chunk %s: %s",
+                            chunk.get("key"),
+                            e,
+                        )
+                messages = build_multimodal_rag_chat_messages(
+                    payload.message, history, context, image_data_urls
+                )
+            else:
+                messages = build_rag_chat_messages(payload.message, history, context)
         else:
             # General Chat Pathway
             context_results = []
-            messages = build_general_chat_messages(payload.message, history)
+            if payload.images:
+                llm = vision_llm
+                messages = build_image_chat_messages(
+                    payload.message, payload.images, history
+                )
+            else:
+                messages = build_general_chat_messages(payload.message, history)
 
         assistant_text = await llm.generate(messages)
         if not assistant_text:
@@ -271,7 +350,9 @@ async def chat_stream(
     repo=Depends(get_repository),
     settings=Depends(get_settings),
     llm=Depends(get_llm_client),
+    vision_llm=Depends(get_vision_llm_client),
     vector_store=Depends(get_vector_store),
+    storage=Depends(get_storage),
     user_id: str = Depends(get_current_user_id),
 ) -> StreamingResponse:
     try:
@@ -296,6 +377,11 @@ async def chat_stream(
         )
 
         user_message_id = str(uuid4())
+        attachments_list = await _upload_payload_images(
+            conversation_id, user_message_id, payload.images, storage
+        )
+        attachment_legacy = attachments_list[0] if attachments_list else None
+
         await to_thread.run_sync(
             repo.put_message,
             conversation_id,
@@ -303,8 +389,9 @@ async def chat_stream(
             "user",
             payload.message,
             created_at,
-            None,
+            attachment_legacy,
             user_id,
+            attachments_list,
         )
 
         history = await _load_history(
@@ -359,11 +446,40 @@ async def chat_stream(
                 logger.info("RAG requested but no context was retrieved")
                 context = "No relevant context found."
 
-            messages = build_rag_chat_messages(payload.message, history, context)
+            # Check for image chunks
+            image_chunks = [item for item in context_results if item.get("is_image")]
+            if image_chunks or payload.images:
+                llm = vision_llm
+                image_data_urls = list(payload.images) if payload.images else []
+                for chunk in image_chunks:
+                    try:
+                        img_bytes = await to_thread.run_sync(
+                            storage.download_bytes, chunk["image_s3_key"]
+                        )
+                        mime_type = chunk.get("mime_type", "image/png")
+                        encoded = base64.b64encode(img_bytes).decode("ascii")
+                        image_data_urls.append(f"data:{mime_type};base64,{encoded}")
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to download image for chunk %s: %s",
+                            chunk.get("key"),
+                            e,
+                        )
+                messages = build_multimodal_rag_chat_messages(
+                    payload.message, history, context, image_data_urls
+                )
+            else:
+                messages = build_rag_chat_messages(payload.message, history, context)
         else:
             # General Chat Pathway
             context_results = []
-            messages = build_general_chat_messages(payload.message, history)
+            if payload.images:
+                llm = vision_llm
+                messages = build_image_chat_messages(
+                    payload.message, payload.images, history
+                )
+            else:
+                messages = build_general_chat_messages(payload.message, history)
 
         async def token_generator():
             accumulated_text = ""
@@ -434,202 +550,6 @@ async def chat_stream(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
-        )
-
-
-@router.post("/chat/image", response_model=ChatImageResponse)
-async def chat_image(
-    file: UploadFile | None = File(None),
-    files: list[UploadFile] = File([]),
-    message: str | None = Form(None),
-    conversation_id: str | None = Form(None),
-    repo=Depends(get_repository),
-    settings=Depends(get_settings),
-    storage=Depends(get_storage),
-    llm=Depends(get_vision_llm_client),
-    user_id: str = Depends(get_current_user_id),
-) -> ChatImageResponse:
-    try:
-        all_files = []
-        if file:
-            all_files.append(file)
-        if files:
-            all_files.extend(files)
-
-        if not all_files:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No image files uploaded",
-            )
-
-        resolved_conversation_id = conversation_id or str(uuid4())
-        user_message_id = str(uuid4())
-        created_at = utcnow_iso()
-
-        attachments = []
-        image_data_urls = []
-
-        for idx, upload_file in enumerate(all_files):
-            if upload_file.content_type not in settings.allowed_image_mime_types:
-                logger.warning(
-                    "chat_image rejected unsupported mime_type=%s index=%d",
-                    upload_file.content_type,
-                    idx,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Unsupported image type: {upload_file.filename}",
-                )
-
-            data = await upload_file.read()
-            if not data:
-                logger.warning("chat_image received empty upload index=%d", idx)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Empty upload: {upload_file.filename}",
-                )
-
-            if len(data) > settings.max_image_bytes:
-                logger.warning(
-                    "chat_image image too large size=%d max=%d index=%d",
-                    len(data),
-                    settings.max_image_bytes,
-                    idx,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"Image exceeds max size: {upload_file.filename}",
-                )
-
-            extension = extension_for_mime(upload_file.content_type)
-            suffix = f"_{idx}" if len(all_files) > 1 else ""
-            s3_key = build_image_key(
-                resolved_conversation_id, f"{user_message_id}{suffix}", extension
-            )
-            upload_result = await to_thread.run_sync(
-                storage.upload_image,
-                s3_key,
-                data,
-                upload_file.content_type,
-            )
-
-            presigned_url = storage.generate_presigned_url(s3_key)
-            attachment_dict = asdict(upload_result)
-            attachment_dict["presigned_url"] = presigned_url
-
-            attachments.append(Attachment(**attachment_dict))
-
-            data_url = f"data:{upload_file.content_type};base64,{base64.b64encode(data).decode('ascii')}"
-            image_data_urls.append(data_url)
-
-        logger.info(
-            "chat_image request conversation_id=%s user_id=%s files_count=%d",
-            resolved_conversation_id,
-            user_id,
-            len(all_files),
-        )
-
-        # Set dynamic conversation name based on first message (up to 30 chars) or default
-        conv_name = message[:30] if message else "Image Chat"
-        if message and len(message) > 30:
-            conv_name += "..."
-
-        await to_thread.run_sync(
-            repo.create_conversation,
-            resolved_conversation_id,
-            created_at,
-            user_id,
-            conv_name,
-        )
-
-        attachment_dict_legacy = attachments[0].model_dump() if attachments else None
-        attachments_list = [a.model_dump() for a in attachments]
-
-        await to_thread.run_sync(
-            repo.put_message,
-            resolved_conversation_id,
-            user_message_id,
-            "user",
-            message or "",
-            created_at,
-            attachment_dict_legacy,
-            user_id,
-            attachments_list,
-        )
-
-        history = await _load_history(
-            repo, resolved_conversation_id, settings.max_history_messages
-        )
-        messages = build_image_chat_messages(
-            message=message,
-            image_data_urls=image_data_urls,
-            history=history,
-        )
-
-        assistant_text = await llm.generate(messages)
-        if not assistant_text:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="LLM returned empty response",
-            )
-
-        assistant_message_id = str(uuid4())
-        assistant_created_at = utcnow_iso()
-        await to_thread.run_sync(
-            repo.put_message,
-            resolved_conversation_id,
-            assistant_message_id,
-            "assistant",
-            assistant_text,
-            assistant_created_at,
-            None,
-            None,
-        )
-
-        context_text = message or "[images]"
-        await _update_context(
-            repo,
-            resolved_conversation_id,
-            settings.max_history_messages,
-            settings.context_ttl_seconds,
-            history,
-            context_text,
-            assistant_text,
-        )
-
-        logger.info(
-            "chat_image complete conversation_id=%s user_message_id=%s assistant_message_id=%s",
-            resolved_conversation_id,
-            user_message_id,
-            assistant_message_id,
-        )
-        return ChatImageResponse(
-            conversation_id=resolved_conversation_id,
-            user_message_id=user_message_id,
-            assistant_message_id=assistant_message_id,
-            assistant_message=assistant_text,
-            created_at=assistant_created_at,
-            attachment=attachments[0] if attachments else None,
-            attachments=attachments,
-        )
-    except Exception as e:
-        error_msg = str(e)
-        if isinstance(e, HTTPException):
-            error_msg = e.detail
-            logger.warning(
-                "chat_image HTTP error conversation_id=%s status=%d detail=%s",
-                conversation_id or "unknown",
-                e.status_code,
-                e.detail,
-            )
-        else:
-            logger.exception(
-                "chat_image unexpected error conversation_id=%s",
-                conversation_id or "unknown",
-            )
-        return ChatImageResponse(
-            conversation_id=conversation_id or "unknown",
-            error=error_msg,
         )
 
 

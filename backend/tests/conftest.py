@@ -225,6 +225,12 @@ class InMemoryStorageService:
     def generate_presigned_url(self, key: str, expiration_seconds: int = 3600) -> str:
         return f"http://mock-s3-presigned-url/{key}"
 
+    def download_bytes(self, key: str) -> bytes:
+        for item in self.raw_uploads:
+            if item["key"] == key:
+                return item["data"]
+        return b"dummy image content"
+
 
 class FakeVectorStore:
     def __init__(self) -> None:
@@ -283,7 +289,6 @@ class FakeRagService:
             {"filename": filename, "data": data, "mime_type": mime_type, "user_id": user_id, "tags": tags}
         )
         return RagIngestResult(document_id="doc-test", chunks_ingested=2)
-
 
 
 @pytest.fixture()

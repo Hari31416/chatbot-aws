@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import base64
 import json
 import logging
-from dataclasses import asdict
-from datetime import timedelta
 from uuid import uuid4
 
 from anyio import to_thread
@@ -12,17 +9,15 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import (
+    get_chat_service,
     get_current_user_id,
-    get_llm_client,
     get_repository,
     get_settings,
     get_storage,
     get_vector_store,
-    get_vision_llm_client,
 )
 from ..models.schemas import (
     Attachment,
-    ChatImageResponse,
     ChatRequest,
     ChatResponse,
     ConversationResponse,
@@ -34,17 +29,8 @@ from ..models.schemas import (
     RagSearchResponse,
     UpdateConversationRequest,
 )
-from ..services.prompt import (
-    build_general_chat_messages,
-    build_history_messages,
-    build_image_chat_messages,
-    build_rag_chat_messages,
-    build_multimodal_rag_chat_messages,
-    build_reformulate_prompt,
-)
-from ..services.storage import build_image_key, extension_for_mime
-
-from ..utils.time import to_epoch_seconds, utcnow, utcnow_iso
+from ..services.chat import ChatService
+from ..utils.time import utcnow_iso
 
 logger = logging.getLogger(__name__)
 
@@ -57,270 +43,45 @@ def warm() -> dict[str, str]:
     return {"status": "warmed"}
 
 
-async def _load_history(repo, conversation_id: str, max_messages: int) -> list[dict]:
-    context_item = await to_thread.run_sync(repo.get_context, conversation_id)
-    if context_item and context_item.get("messages"):
-        return context_item["messages"]
-    items = await to_thread.run_sync(
-        repo.get_recent_messages, conversation_id, max_messages
-    )
-    return build_history_messages(items)
-
-
-async def _update_context(
-    repo,
-    conversation_id: str,
-    max_messages: int,
-    ttl_seconds: int,
-    history: list[dict],
-    user_text: str,
-    assistant_text: str,
-) -> None:
-    messages = build_history_messages(history)
-    messages.extend(
-        [
-            {"role": "user", "content": user_text},
-            {"role": "assistant", "content": assistant_text},
-        ]
-    )
-    trimmed = messages[-max_messages:]
-    ttl_epoch = to_epoch_seconds(utcnow() + timedelta(seconds=ttl_seconds))
-    await to_thread.run_sync(
-        repo.set_context, conversation_id, trimmed, ttl_epoch, utcnow_iso()
-    )
-
-
-async def _upload_payload_images(
-    conversation_id: str,
-    user_message_id: str,
-    images: list[str] | None,
-    storage,
-) -> list[dict]:
-    if not images:
-        return []
-    attachments_list = []
-    for idx, data_url in enumerate(images):
-        try:
-            header, base64_data = data_url.split(",", 1)
-            mime_type = header.split(";")[0].split(":")[1]
-            extension = extension_for_mime(mime_type)
-            suffix = f"_{idx}" if len(images) > 1 else ""
-            s3_key = build_image_key(
-                conversation_id, f"{user_message_id}{suffix}", extension
-            )
-            img_b64_str = base64_data
-            rem = len(img_b64_str) % 4
-            if rem > 0:
-                img_b64_str += "=" * (4 - rem)
-            img_bytes = base64.b64decode(img_b64_str)
-            await to_thread.run_sync(
-                storage.upload_image,
-                s3_key,
-                img_bytes,
-                mime_type,
-            )
-            attachments_list.append(
-                {
-                    "s3_key": s3_key,
-                    "mime_type": mime_type,
-                    "size_bytes": len(img_bytes),
-                }
-            )
-        except Exception as e:
-            logger.warning("Failed to process image payload %d: %s", idx, e)
-    return attachments_list
-
-
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     payload: ChatRequest,
-    repo=Depends(get_repository),
-    settings=Depends(get_settings),
-    llm=Depends(get_llm_client),
-    vision_llm=Depends(get_vision_llm_client),
-    vector_store=Depends(get_vector_store),
-    storage=Depends(get_storage),
+    chat_service: ChatService = Depends(get_chat_service),
     user_id: str = Depends(get_current_user_id),
 ) -> ChatResponse:
     try:
-        conversation_id = payload.conversation_id or str(uuid4())
-        logger.info(
-            "chat request conversation_id=%s user_id=%s", conversation_id, user_id
-        )
-        created_at = utcnow_iso()
-        # Set dynamic conversation name based on first message (up to 30 chars)
-        conv_name = payload.message[:30] if payload.message else "New Chat..."
-        if payload.message and len(payload.message) > 30:
-            conv_name += "..."
+        chat_ctx = await chat_service.prepare_chat(payload, user_id)
 
-        await to_thread.run_sync(
-            repo.create_conversation,
-            conversation_id,
-            created_at,
-            user_id,
-            conv_name,
-        )
-
-        user_message_id = str(uuid4())
-        attachments_list = await _upload_payload_images(
-            conversation_id, user_message_id, payload.images, storage
-        )
-        attachment_legacy = attachments_list[0] if attachments_list else None
-
-        await to_thread.run_sync(
-            repo.put_message,
-            conversation_id,
-            user_message_id,
-            "user",
-            payload.message,
-            created_at,
-            attachment_legacy,
-            user_id,
-            attachments_list,
-        )
-
-        history = await _load_history(
-            repo, conversation_id, settings.max_history_messages
-        )
-        if payload.use_rag:
-            # RAG Pathway
-            history_lines = []
-            for msg in history:
-                role = msg.get("role", "").capitalize()
-                content = msg.get("content", "")
-                history_lines.append(f"{role}: {content}")
-            history_text = "\n".join(history_lines) if history_lines else "None"
-
-            reformulate_prompt = build_reformulate_prompt(history_text, payload.message)
-            try:
-                standalone_query = await llm.generate(
-                    [{"role": "user", "content": reformulate_prompt}]
-                )
-                standalone_query = standalone_query.strip().strip('"').strip("'")
-                logger.info(
-                    "Generated standalone query: '%s' from original: '%s'",
-                    standalone_query,
-                    payload.message,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to generate standalone query: %s. Falling back to original query.",
-                    e,
-                )
-                standalone_query = payload.message
-
-            context_results = await vector_store.similarity_search(
-                standalone_query,
-                user_id=user_id,
-                top_k=settings.rag_top_k,
-                documents=payload.rag_documents,
-                tags=payload.rag_tags,
-            )
-
-            # Format the context
-            context = ""
-            if context_results:
-                for idx, item in enumerate(context_results, start=1):
-                    context += f"[SOURCE {idx} STARTS]\n"
-                    context += f"File: {item['source']}\n"
-                    if item.get("page"):
-                        context += f"Page: {item['page']}\n"
-                    context += f"Content: {item['text']}\n"
-                    context += f"[/SOURCE {idx} ENDS]\n\n"
-            else:
-                logger.info("RAG requested but no context was retrieved")
-                context = "No relevant context found."
-
-            # Check for image chunks
-            image_chunks = [item for item in context_results if item.get("is_image")]
-            if image_chunks or payload.images:
-                llm = vision_llm
-                image_data_urls = list(payload.images) if payload.images else []
-                for chunk in image_chunks:
-                    try:
-                        img_bytes = await to_thread.run_sync(
-                            storage.download_bytes, chunk["image_s3_key"]
-                        )
-                        mime_type = chunk.get("mime_type", "image/png")
-                        encoded = base64.b64encode(img_bytes).decode("ascii")
-                        image_data_urls.append(f"data:{mime_type};base64,{encoded}")
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to download image for chunk %s: %s",
-                            chunk.get("key"),
-                            e,
-                        )
-                messages = build_multimodal_rag_chat_messages(
-                    payload.message, history, context, image_data_urls
-                )
-            else:
-                messages = build_rag_chat_messages(payload.message, history, context)
-        else:
-            # General Chat Pathway
-            context_results = []
-            if payload.images:
-                llm = vision_llm
-                messages = build_image_chat_messages(
-                    payload.message, payload.images, history
-                )
-            else:
-                messages = build_general_chat_messages(payload.message, history)
-
-        assistant_text = await llm.generate(messages)
+        assistant_text = await chat_ctx.llm_client.generate(chat_ctx.messages)
         if not assistant_text:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="LLM returned empty response",
             )
 
-        # Process citations
-        from ..services.citation import process_citations
-
-        if payload.use_rag and context_results:
-            processed_text, cited_sources = process_citations(
-                assistant_text, context_results
+        processed_text, assistant_message_id, cited_sources = (
+            await chat_service.finalize_chat(
+                conversation_id=chat_ctx.conversation_id,
+                history=chat_ctx.history,
+                user_message=payload.message,
+                assistant_text=assistant_text,
+                use_rag=payload.use_rag,
+                context_results=chat_ctx.context_results,
             )
-        else:
-            processed_text = assistant_text
-            cited_sources = []
-
-        assistant_message_id = str(uuid4())
-        assistant_created_at = utcnow_iso()
-        await to_thread.run_sync(
-            repo.put_message,
-            conversation_id,
-            assistant_message_id,
-            "assistant",
-            processed_text,
-            assistant_created_at,
-            None,
-            None,
-            None,
-            cited_sources,
-        )
-
-        await _update_context(
-            repo,
-            conversation_id,
-            settings.max_history_messages,
-            settings.context_ttl_seconds,
-            history,
-            payload.message,
-            processed_text,
         )
 
         logger.info(
             "chat complete conversation_id=%s user_message_id=%s assistant_message_id=%s",
-            conversation_id,
-            user_message_id,
+            chat_ctx.conversation_id,
+            chat_ctx.user_message_id,
             assistant_message_id,
         )
         return ChatResponse(
-            conversation_id=conversation_id,
-            user_message_id=user_message_id,
+            conversation_id=chat_ctx.conversation_id,
+            user_message_id=chat_ctx.user_message_id,
             assistant_message_id=assistant_message_id,
             assistant_message=processed_text,
-            created_at=assistant_created_at,
+            created_at=utcnow_iso(),
             citations=cited_sources if cited_sources else None,
         )
     except Exception as e:
@@ -347,191 +108,38 @@ async def chat(
 @router.post("/chat/stream")
 async def chat_stream(
     payload: ChatRequest,
-    repo=Depends(get_repository),
-    settings=Depends(get_settings),
-    llm=Depends(get_llm_client),
-    vision_llm=Depends(get_vision_llm_client),
-    vector_store=Depends(get_vector_store),
-    storage=Depends(get_storage),
+    chat_service: ChatService = Depends(get_chat_service),
     user_id: str = Depends(get_current_user_id),
 ) -> StreamingResponse:
     try:
-        conversation_id = payload.conversation_id or str(uuid4())
-        logger.info(
-            "chat_stream request conversation_id=%s user_id=%s",
-            conversation_id,
-            user_id,
-        )
-        created_at = utcnow_iso()
-        # Set dynamic conversation name based on first message (up to 30 chars)
-        conv_name = payload.message[:30] if payload.message else "New Chat..."
-        if payload.message and len(payload.message) > 30:
-            conv_name += "..."
-
-        await to_thread.run_sync(
-            repo.create_conversation,
-            conversation_id,
-            created_at,
-            user_id,
-            conv_name,
-        )
-
-        user_message_id = str(uuid4())
-        attachments_list = await _upload_payload_images(
-            conversation_id, user_message_id, payload.images, storage
-        )
-        attachment_legacy = attachments_list[0] if attachments_list else None
-
-        await to_thread.run_sync(
-            repo.put_message,
-            conversation_id,
-            user_message_id,
-            "user",
-            payload.message,
-            created_at,
-            attachment_legacy,
-            user_id,
-            attachments_list,
-        )
-
-        history = await _load_history(
-            repo, conversation_id, settings.max_history_messages
-        )
-        if payload.use_rag:
-            # RAG Pathway
-            history_lines = []
-            for msg in history:
-                role = msg.get("role", "").capitalize()
-                content = msg.get("content", "")
-                history_lines.append(f"{role}: {content}")
-            history_text = "\n".join(history_lines) if history_lines else "None"
-
-            reformulate_prompt = build_reformulate_prompt(history_text, payload.message)
-            try:
-                standalone_query = await llm.generate(
-                    [{"role": "user", "content": reformulate_prompt}]
-                )
-                standalone_query = standalone_query.strip().strip('"').strip("'")
-                logger.info(
-                    "Generated standalone query: '%s' from original: '%s'",
-                    standalone_query,
-                    payload.message,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to generate standalone query: %s. Falling back to original query.",
-                    e,
-                )
-                standalone_query = payload.message
-
-            context_results = await vector_store.similarity_search(
-                standalone_query,
-                user_id=user_id,
-                top_k=settings.rag_top_k,
-                documents=payload.rag_documents,
-                tags=payload.rag_tags,
-            )
-
-            # Format the context
-            context = ""
-            if context_results:
-                for idx, item in enumerate(context_results, start=1):
-                    context += f"[SOURCE {idx} STARTS]\n"
-                    context += f"File: {item['source']}\n"
-                    if item.get("page"):
-                        context += f"Page: {item['page']}\n"
-                    context += f"Content: {item['text']}\n"
-                    context += f"[/SOURCE {idx} ENDS]\n\n"
-            else:
-                logger.info("RAG requested but no context was retrieved")
-                context = "No relevant context found."
-
-            # Check for image chunks
-            image_chunks = [item for item in context_results if item.get("is_image")]
-            if image_chunks or payload.images:
-                llm = vision_llm
-                image_data_urls = list(payload.images) if payload.images else []
-                for chunk in image_chunks:
-                    try:
-                        img_bytes = await to_thread.run_sync(
-                            storage.download_bytes, chunk["image_s3_key"]
-                        )
-                        mime_type = chunk.get("mime_type", "image/png")
-                        encoded = base64.b64encode(img_bytes).decode("ascii")
-                        image_data_urls.append(f"data:{mime_type};base64,{encoded}")
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to download image for chunk %s: %s",
-                            chunk.get("key"),
-                            e,
-                        )
-                messages = build_multimodal_rag_chat_messages(
-                    payload.message, history, context, image_data_urls
-                )
-            else:
-                messages = build_rag_chat_messages(payload.message, history, context)
-        else:
-            # General Chat Pathway
-            context_results = []
-            if payload.images:
-                llm = vision_llm
-                messages = build_image_chat_messages(
-                    payload.message, payload.images, history
-                )
-            else:
-                messages = build_general_chat_messages(payload.message, history)
+        chat_ctx = await chat_service.prepare_chat(payload, user_id)
 
         async def token_generator():
             accumulated_text = ""
             assistant_message_id = str(uuid4())
             try:
                 # Call streaming method of LiteLLM/OpenAI client
-                async for chunk in llm.astream(messages):
+                async for chunk in chat_ctx.llm_client.astream(chat_ctx.messages):
+                    if not chunk.choices:
+                        continue
                     token = chunk.choices[0].delta.content or ""
                     if token:
                         accumulated_text += token
                         # Yield compliant SSE event chunk
-                        yield f"data: {json.dumps({'text': token, 'conversation_id': conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': user_message_id})}\n\n"
+                        yield f"data: {json.dumps({'text': token, 'conversation_id': chat_ctx.conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': chat_ctx.user_message_id})}\n\n"
 
-                # Stream succeeded, now process citations
-                from ..services.citation import process_citations
-
-                if payload.use_rag and context_results:
-                    processed_text, cited_sources = process_citations(
-                        accumulated_text, context_results
-                    )
-                else:
-                    processed_text = accumulated_text
-                    cited_sources = []
+                processed_text, _, cited_sources = await chat_service.finalize_chat(
+                    conversation_id=chat_ctx.conversation_id,
+                    history=chat_ctx.history,
+                    user_message=payload.message,
+                    assistant_text=accumulated_text,
+                    use_rag=payload.use_rag,
+                    context_results=chat_ctx.context_results,
+                    assistant_message_id=assistant_message_id,
+                )
 
                 # Yield remapped citations and final remapped content text
-                yield f"data: {json.dumps({'citations': cited_sources, 'text': '', 'conversation_id': conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': user_message_id, 'final_content': processed_text})}\n\n"
-
-                # Save complete assistant response in DB
-                assistant_created_at = utcnow_iso()
-                await to_thread.run_sync(
-                    repo.put_message,
-                    conversation_id,
-                    assistant_message_id,
-                    "assistant",
-                    processed_text,
-                    assistant_created_at,
-                    None,
-                    None,
-                    None,
-                    cited_sources,
-                )
-
-                # Update context cache
-                await _update_context(
-                    repo,
-                    conversation_id,
-                    settings.max_history_messages,
-                    settings.context_ttl_seconds,
-                    history,
-                    payload.message,
-                    processed_text,
-                )
+                yield f"data: {json.dumps({'citations': cited_sources, 'text': '', 'conversation_id': chat_ctx.conversation_id, 'assistant_message_id': assistant_message_id, 'user_message_id': chat_ctx.user_message_id, 'final_content': processed_text})}\n\n"
 
                 # Send close token
                 yield "data: [DONE]\n\n"
@@ -539,7 +147,7 @@ async def chat_stream(
             except Exception as e:
                 logger.exception(
                     "Error in LLM stream generator for conversation_id=%s",
-                    conversation_id,
+                    chat_ctx.conversation_id,
                 )
                 yield f"data: {json.dumps({'error': 'Stream generation interrupted', 'details': str(e)})}\n\n"
 

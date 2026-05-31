@@ -11,6 +11,7 @@ from typing import Any, cast
 from fastapi import Depends, HTTPException, Request, status
 
 from .repositories.conversation_repository import ConversationRepository
+from .services.chat import ChatService
 from .services.llm import LlmClient
 from .services.rag import RagService
 from .services.storage import StorageService
@@ -83,6 +84,9 @@ def get_llm_client() -> LlmClient:
         if ssm_key:
             api_key = ssm_key
 
+    if not api_key and settings.litellm_model.startswith("gemini/"):
+        api_key = os.getenv("GEMINI_API_KEY")
+
     return LlmClient(
         model=settings.litellm_model,
         api_key=api_key,
@@ -99,6 +103,9 @@ def get_vision_llm_client() -> LlmClient:
         ssm_key = get_ssm_parameter(ssm_param_name)
         if ssm_key:
             api_key = ssm_key
+
+    if not api_key and settings.litellm_vision_model.startswith("gemini/"):
+        api_key = os.getenv("GEMINI_API_KEY")
 
     # Fallback to standard key if no vision API key is configured
     if not api_key:
@@ -175,6 +182,36 @@ def get_rag_service(
         s3_client=s3_client,
         s3_bucket_name=settings.s3_bucket_name,
         textract_client=textract_client,
+    )
+
+
+def get_chat_service(
+    repo=Depends(get_repository),
+    settings=Depends(get_settings),
+    llm=Depends(get_llm_client),
+    vision_llm=Depends(get_vision_llm_client),
+    vector_store=Depends(get_vector_store),
+    storage=Depends(get_storage),
+) -> ChatService:
+    if hasattr(repo, "dependency") or type(repo).__name__ == "Depends":
+        repo = get_repository()
+    if hasattr(settings, "dependency") or type(settings).__name__ == "Depends":
+        settings = get_settings()
+    if hasattr(llm, "dependency") or type(llm).__name__ == "Depends":
+        llm = get_llm_client()
+    if hasattr(vision_llm, "dependency") or type(vision_llm).__name__ == "Depends":
+        vision_llm = get_vision_llm_client()
+    if hasattr(vector_store, "dependency") or type(vector_store).__name__ == "Depends":
+        vector_store = get_vector_store()
+    if hasattr(storage, "dependency") or type(storage).__name__ == "Depends":
+        storage = get_storage()
+    return ChatService(
+        repo=repo,
+        settings=settings,
+        llm_client=llm,
+        vision_llm_client=vision_llm,
+        vector_store=vector_store,
+        storage=storage,
     )
 
 

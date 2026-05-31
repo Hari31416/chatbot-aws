@@ -110,3 +110,53 @@ def test_chat_stream_image_payload(test_client: TestClient) -> None:
     assert user_msg["role"] == "user"
     assert len(user_msg["attachments"]) == 1
     assert user_msg["attachments"][0]["mime_type"] == "image/png"
+
+
+def test_chat_stream_empty_choices(test_client: TestClient) -> None:
+    from app.dependencies import get_llm_client
+
+    class EmptyChoiceChunk:
+        def __init__(self):
+            self.choices = []
+
+    class ChunkDelta:
+        def __init__(self, content: str):
+            self.content = content
+
+    class ChunkChoice:
+        def __init__(self, content: str):
+            self.delta = ChunkDelta(content)
+
+    class ValidChunk:
+        def __init__(self, content: str):
+            self.choices = [ChunkChoice(content)]
+
+    class MockLlmClientWithEmptyChoices:
+        async def astream(self, messages: list[dict]):
+            yield EmptyChoiceChunk()
+            yield ValidChunk("hello")
+            yield EmptyChoiceChunk()
+            yield ValidChunk(" world")
+
+    app = test_client.app
+    app.dependency_overrides[get_llm_client] = lambda: MockLlmClientWithEmptyChoices()
+
+    response = test_client.post("/chat/stream", json={"message": "Test empty choices"})
+    assert response.status_code == 200
+
+    lines = list(response.iter_lines())
+    non_empty_lines = [line for line in lines if line.strip()]
+
+    import json
+    chunks = []
+    for line in non_empty_lines:
+        line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+        if line_str == "data: [DONE]":
+            break
+        if line_str.startswith("data: "):
+            chunks.append(json.loads(line_str.replace("data: ", "")))
+
+    assert len(chunks) >= 2
+    assert chunks[0]["text"] == "hello"
+    assert chunks[1]["text"] == " world"
+

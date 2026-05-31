@@ -74,11 +74,16 @@ class VectorStoreClient:
         if not cleaned:
             return []
 
+        if "gemini" in self.embedding_model.lower():
+            inputs = [f"task: sentence similarity | query: {text}" for text in cleaned]
+        else:
+            inputs = cleaned
+
         def embed_texts() -> Any:
             from litellm import embedding
             return embedding(
                 model=self.embedding_model,
-                input=cleaned,
+                input=inputs,
                 api_key=self.gemini_api_key,
                 dimensions=self.dimension,
             )

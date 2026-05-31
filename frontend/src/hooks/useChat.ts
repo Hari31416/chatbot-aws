@@ -33,7 +33,7 @@ export function useChat({ apiBaseUrl, functionUrl, isLoggedIn, userId }: UseChat
     fileInputRef,
     handleImageChange,
     handleRemoveImage,
-    clearImages,
+    clearSelection,
   } = useImageUpload();
 
   const [messages, setMessages] = React.useState<Record<string, Message[]>>(
@@ -355,7 +355,7 @@ export function useChat({ apiBaseUrl, functionUrl, isLoggedIn, userId }: UseChat
     );
 
     setInputText("");
-    clearImages();
+    clearSelection();
   };
 
   const activeMessages = activeConversationId
@@ -375,7 +375,7 @@ export function useChat({ apiBaseUrl, functionUrl, isLoggedIn, userId }: UseChat
     fileInputRef,
     handleImageChange,
     handleRemoveImage,
-    clearImages,
+    clearSelection,
     messages,
     setMessages,
     inputText,

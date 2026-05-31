@@ -7,6 +7,8 @@ export function useImageUpload() {
   const [imagePreviewUrls, setImagePreviewUrls] = React.useState<string[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  const allCreatedUrls = React.useRef<Set<string>>(new Set());
+
   const handleImageChange = React.useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
@@ -35,7 +37,9 @@ export function useImageUpload() {
           continue;
         }
         validFiles.push(file);
-        validUrls.push(URL.createObjectURL(file));
+        const url = URL.createObjectURL(file);
+        validUrls.push(url);
+        allCreatedUrls.current.add(url);
       }
 
       if (validFiles.length > 0) {
@@ -52,13 +56,17 @@ export function useImageUpload() {
         const urlToRevoke = prev[index];
         if (urlToRevoke) {
           URL.revokeObjectURL(urlToRevoke);
+          allCreatedUrls.current.delete(urlToRevoke);
         }
         return prev.filter((_, i) => i !== index);
       });
       setSelectedImages((prev) => prev.filter((_, i) => i !== index));
     } else {
       setImagePreviewUrls((prev) => {
-        prev.forEach((url) => URL.revokeObjectURL(url));
+        prev.forEach((url) => {
+          URL.revokeObjectURL(url);
+          allCreatedUrls.current.delete(url);
+        });
         return [];
       });
       setSelectedImages([]);
@@ -68,21 +76,26 @@ export function useImageUpload() {
     }
   }, []);
 
-  const urlsRef = React.useRef<string[]>([]);
-  React.useEffect(() => {
-    urlsRef.current = imagePreviewUrls;
-  }, [imagePreviewUrls]);
-
   // Cleanup object URLs on unmount
   React.useEffect(() => {
     return () => {
-      urlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      allCreatedUrls.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          console.error("Error revoking URL:", e);
+        }
+      });
     };
   }, []);
 
-  const clearImages = React.useCallback(() => {
-    handleRemoveImage();
-  }, [handleRemoveImage]);
+  const clearSelection = React.useCallback(() => {
+    setSelectedImages([]);
+    setImagePreviewUrls([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, []);
 
   return {
     selectedImages,
@@ -92,6 +105,7 @@ export function useImageUpload() {
     fileInputRef,
     handleImageChange,
     handleRemoveImage,
-    clearImages,
+    clearSelection,
   };
 }
+
